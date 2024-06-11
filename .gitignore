@@ -1,0 +1,5 @@
+.env
+*.json
+*.xlsx
+PrivateStuff.py
+PrivateStuff.cpython-312.pyc
