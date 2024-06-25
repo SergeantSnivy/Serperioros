@@ -23,24 +23,28 @@ def getUniTable(numResponses):
 
 # generates a voting section based on a provided number of screens
 # returns a dictionary with all responses on a screen per its keyword...
-# ...and a list of all rows of data to put in the section's Excel worksheet
+# ...a list of all rows of data to put in the section's Excel worksheet...
+# ...and a dictionary with the section name as a key and a list of the keywords as the value
 def generate_section(responses,numScreens,sectionNum):
     # responses is a dict, so get all the keys in a list
     IDs = [ID for ID in responses]
     shuffle(IDs)
     splits = np.array_split(IDs,numScreens)
     keyResponsePairs = [(None,prompt)]
+    sectionName = chr(65+sectionNum)
     responsesOnScreen = {}
+    keywordsInSection = {sectionName: []}
     for j in range(len(splits)):
         keyword = f'{chr(65+sectionNum)}{str(j+1)}'
-        responsesOnScreen[keyword]=[]
+        responsesOnScreen[keyword]={}
+        keywordsInSection[sectionName].append(keyword)
         keyResponsePairs.append((None,keyword))
         for k,ID in enumerate(splits[j],start=0):
             keyResponsePairs.append((uniTable[k],responses[ID]['content']))
-            responsesOnScreen[keyword].append({uniTable[k]:ID})
+            responsesOnScreen[keyword][uniTable[k]] = ID
         if j<len(splits)-1:
             keyResponsePairs.append((None,None))
-    return keyResponsePairs,responsesOnScreen
+    return keyResponsePairs,responsesOnScreen,keywordsInSection
 
 # takes all the sections and puts them into an Excel sheet
 def fill_excel_sheet(file_path,sections):
@@ -77,7 +81,8 @@ def generate_voting(responses):
     global uniTable
     uniTable = getUniTable(numResponses)
     sectionSpecs = []
-    maxes = [-1,50,30,20,13]
+    # maxes = [-1,50,30,20,2]
+    maxes = [-1,3,3,2,2]
     repeats = [1,2,2,2,3]
     for i in range(5):
         sectionSpecs.append({'maxPerScreen':maxes[i],'repeat':repeats[i]})
@@ -87,6 +92,7 @@ def generate_voting(responses):
     global prompt
     prompt = seasonInfoDB['prompts'][currentRound-1]
     allScreens = {}
+    keywordsInEachSection = {}
     for spec in sectionSpecs:
         # get number of screens
         if spec['maxPerScreen']==-1:
@@ -94,11 +100,12 @@ def generate_voting(responses):
         else:
             numScreens = math.ceil(len(responses)/spec['maxPerScreen'])
         for i in range(spec['repeat']):
-            keyResponsePairs,newScreens = generate_section(responses,numScreens,len(sections))
+            keyResponsePairs,newScreens,keywordsInSection = generate_section(responses,numScreens,len(sections))
             sections.append(keyResponsePairs)
             allScreens = allScreens | newScreens
+            keywordsInEachSection = keywordsInEachSection | keywordsInSection
     excel_file_path = "Test_Voting.xlsx"
     fill_excel_sheet(excel_file_path,sections)
     sheet_id = create_google_sheet(excel_file_path)
     print(sheet_id)
-    return uniTable,allScreens,sheet_id
+    return uniTable,allScreens,keywordsInEachSection,sheet_id

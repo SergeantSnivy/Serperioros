@@ -84,9 +84,10 @@ async def startResponding(ctx,*,prompt):
 @commands.is_owner()
 @commands.dm_only()
 async def startVoting(ctx):
-    responseDict = RespondingPeriod.getResponseDBWithMessageIDsAsKeys()
-    uniTable,allScreens,sheet_id = GenerateVoting.generate_voting(responseDict)
-    VotingPeriod.createVotingDBs(allScreens)
+    tempDict = RespondingPeriod.getResponseDB()
+    responseDict = RespondingPeriod.userKeysToMessageKeys(tempDict)
+    uniTable,allScreens,keywordsPerSection,sheet_id = GenerateVoting.generate_voting(responseDict)
+    VotingPeriod.createVotingDBs(allScreens,keywordsPerSection)
     currentRound = SeasonInfo.getSeasonInfoDB()['currentRound']
     channel = bot.get_channel(channelIDs['voting'])
     await channel.send(f"Round {str(currentRound)} voting has started!\n"
@@ -122,7 +123,6 @@ async def respond(ctx,*,response):
 @bot.command()
 @commands.dm_only()
 async def edit(ctx,*,newResponse):
-    currentRound = SeasonInfo.getSeasonInfoDB()['currentRound']
     aliveContestants = SeasonInfo.getSeasonInfoDB()['aliveContestants']
     userID = str(ctx.message.author.id)
     messageID = str(ctx.message.id)
@@ -146,6 +146,57 @@ async def edit(ctx,*,newResponse):
         user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has edited their response: `{newResponse}`')
+
+@bot.command()
+@commands.dm_only()
+async def vote(ctx,keyword,letters):
+    userID = str(ctx.message.author.id)
+    botMessage = VotingPeriod.addVote(userID,keyword,letters)
+    await ctx.send(botMessage)
+    if botMessage[0]=='S':
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} has sent a vote: `{keyword} {letters}`')
+
+@bot.command()
+@commands.dm_only()
+async def editvote(ctx,keyword,letters):
+    userID = str(ctx.message.author.id)
+    botMessage = VotingPeriod.editVote(userID,keyword,letters)
+    await ctx.send(botMessage)
+    if botMessage[0]=='S':
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} has edited a vote: `{keyword} {letters}`')
+
+@bot.command()
+@commands.dm_only()
+async def deletevote(ctx,keyword):
+    userID = str(ctx.message.author.id)
+    botMessage = VotingPeriod.deleteVote(userID,keyword)
+    await ctx.send(botMessage)
+    if botMessage[0]=='S':
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} has deleted their vote on screen `{keyword}`')
+
+@bot.command()
+@commands.dm_only()
+async def clearvotes(ctx):
+    userID = str(ctx.message.author.id)
+    botMessage = VotingPeriod.clearVotes(userID)
+    await ctx.send(botMessage)
+    if botMessage[0]=='S':
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} has cleared all their votes')
+
+
+
 
 bot.run(os.getenv('TOKEN')) # run the bot with the token
 

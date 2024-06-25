@@ -33,13 +33,23 @@ def getResponseDB():
         responseDB = json.load(f)
     return responseDB
 
-def getResponseDBWithMessageIDsAsKeys():
-    userIDsAsKeys = getResponseDB()
-    messageIDsAsKeys = {}
-    for userID in userIDsAsKeys:
-        for response in userIDsAsKeys[userID]:
-            messageIDsAsKeys[response['ID']] = {'author':userID,'content':response['content']}
-    return messageIDsAsKeys
+def userKeysToMessageKeys(dbWithUserKeys):
+    dbWithMessageKeys = {}
+    for userID in dbWithUserKeys:
+        for response in dbWithUserKeys[userID]:
+            dbWithMessageKeys[response['ID']] = {'author':userID,'content':response['content']}
+    return dbWithMessageKeys
+
+def messageKeysToUserKeys(dbWithMessageKeys):
+    dbWithUserKeys = {}
+    for messageID in dbWithMessageKeys:
+        response = dbWithMessageKeys['messageID']
+        userID = response['author']
+        if userID not in dbWithUserKeys:
+            dbWithUserKeys[userID] = [{'ID':messageID,'content':response['content']}]
+        else:
+            dbWithUserKeys[userID].append({'ID':messageID,'content':response['content']})
+    return dbWithUserKeys
 
 def updateResponseDB(newDB):
     with open(getRespondingFileName(),'w') as f:
@@ -63,9 +73,9 @@ def addResponse(contestant,response,messageID):
             if contestant not in responseDB:
                 responseDB[contestant] = []
             responseDB[contestant].append({'content':response,'ID':messageID})
+            updateResponseDB(responseDB)
             message = ('Success! The following response has been recorded:\n'
                     +f'`{response}`')
-            updateResponseDB(responseDB)
         else:
             message = (sopN(f'Failed! You have already sent [{str(numRecorded)}] response{{/s}}, ')
                             +'which is the maximum allowed for this round!\nTo edit a response, '
@@ -91,11 +101,11 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         if responseNum>numRecorded:
             return sopN(f'Failed! You have only sent [{str(numRecorded)}] response{{/s}} so far, not {str(responseNum)}!')
         responseDB[contestant][responseNum-1] = {'content':newResponse,'ID':messageID}
+        updateResponseDB(responseDB)
         message = 'Success! Your '
         if maxResponses(contestant)!=1:
             message += f'#{str(responseNum)} '
         message += f'response now reads:\n`{newResponse}`'
-        updateResponseDB(responseDB)
     return message
 
 
