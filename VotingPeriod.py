@@ -91,6 +91,7 @@ def checkVoteValidity(voteLetters,keysOnScreen):
                         +f"character{{/s}} on the screen you're voting on!")
     return message
 
+#TODO: make screen names not case sensitive
 def addVote(userID,keyword,letters):
     # make sure keyword exists
     allScreens = getScreensDB()
@@ -180,14 +181,15 @@ def clearVotes(userID):
         updateVotesDB(votesDB)
         return "Success! All your votes have been deleted!"
     
+def getVPR():
+    numResponses = getSeasonInfoDB()['numResponses']
+    votesDB = getVotesDB()
+    numScores = 0
+    for userID in votesDB:
+        screensDict = votesDB[userID]['screens']
+        for screenName in screensDict:
+            numScores += len(screensDict[screenName])
+    return numScores/numResponses
         
     
-# TODO: move this to a results calculation file
-def addScoresFromVote(keyword,letters):
-    allScreens = getScreensDB()
-    uniSubTable = [keyletter for keyletter in allScreens[keyword]]
-    screenLen=len(letters)
-    for placeInScreen,c in enumerate(uniSubTable):
-        placeInVote=letters.index(c)
-        scoreToAdd=(screenLen-placeInVote-1)/(screenLen-1)
-        allScreens[keyword][placeInScreen].addVoteScore(scoreToAdd)
+

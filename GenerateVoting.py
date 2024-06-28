@@ -1,4 +1,5 @@
 import gspread
+from gspread.utils import ValueInputOption
 from googleapiclient.discovery import build
 from random import shuffle
 import math
@@ -46,32 +47,32 @@ def generate_section(responses,numScreens,sectionNum):
             keyResponsePairs.append((None,None))
     return keyResponsePairs,responsesOnScreen,keywordsInSection
 
-# takes all the sections and puts them into an Excel sheet
-def fill_excel_sheet(file_path,sections):
+# takes all the sections and puts them into an Excel sheet (irrelevant)
+'''def fill_excel_sheet(file_path,sections):
     with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
         for n,sec in enumerate(sections):
             currentDF = pd.DataFrame(sec)
             currentDF = currentDF.fillna('')
             currentDF.to_excel(writer,sheet_name=f'Section {str(n+1)}',index=False,
-                               header=None)
+                               header=None,engine_kwargs={'options': {'strings_to_formulas': True}})'''
 
 # imports data from Excel sheet into a Google Sheet
 # the Google Sheet will be formatted based on a voting template
-def create_google_sheet(file_path):
+def create_google_sheet(sections):
     client = gspread.authorize(priv.creds)
     rV = client.copy(priv.voting_template_id,title="Testing")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
-    df = pd.read_excel(file_path,sheet_name=None,header=None,na_filter=False)
-    for n,(sheet_name,currentDF) in enumerate(df.items()):
+    print
+    #df = pd.read_excel(file_path,sheet_name=None,header=None,na_filter=False)
+    for n,currentSec in enumerate(sections):
         try:
             worksheet = rV.get_worksheet(n+1)
-            worksheet.resize(rows=currentDF.shape[0], cols=currentDF.shape[1])
+            worksheet.resize(rows=len(currentSec), cols=len(currentSec[0]))
         except:
-            worksheet = rV.add_worksheet(title=sheet_name, rows=currentDF.shape[0], cols=currentDF.shape[1])
-        headers = currentDF.iloc[0].values.tolist()
-        worksheet.update([headers] + currentDF.iloc[1:].values.tolist())
+            worksheet = rV.add_worksheet(title=f"Section {str(n)}", rows=len(currentSec), cols=len(currentSec[0]))
+        worksheet.update(currentSec)
     return rV.id
 
 # does all that stuff in order to get the final voting Google Sheet
@@ -81,8 +82,8 @@ def generate_voting(responses):
     global uniTable
     uniTable = getUniTable(numResponses)
     sectionSpecs = []
-    # maxes = [-1,50,30,20,2]
-    maxes = [-1,3,3,2,2]
+    # maxes = [-1,50,30,20,10]
+    maxes = [-1,50,30,12,6]
     repeats = [1,2,2,2,3]
     for i in range(5):
         sectionSpecs.append({'maxPerScreen':maxes[i],'repeat':repeats[i]})
@@ -104,8 +105,6 @@ def generate_voting(responses):
             sections.append(keyResponsePairs)
             allScreens = allScreens | newScreens
             keywordsInEachSection = keywordsInEachSection | keywordsInSection
-    excel_file_path = "Test_Voting.xlsx"
-    fill_excel_sheet(excel_file_path,sections)
-    sheet_id = create_google_sheet(excel_file_path)
+    sheet_id = create_google_sheet(sections)
     print(sheet_id)
     return uniTable,allScreens,keywordsInEachSection,sheet_id

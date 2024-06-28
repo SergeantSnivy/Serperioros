@@ -60,6 +60,7 @@ def maxResponses(contestant):
         return getResponsesPerPerson()+1
     return getResponsesPerPerson()
 
+# TODO: sanitize sheets formula characters (=,+)
 def addResponse(contestant,response,messageID):
     with updateDBLock:
         if len(response)>1900:
