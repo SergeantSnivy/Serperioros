@@ -9,7 +9,9 @@ import CalculateResults
 import SeasonInfo
 from Misc import listToString as lts, singularOrPluralFromList as sopL
 import threading
+import datetime
 from dotenv import load_dotenv
+from catbox_api import catboxAPI
 
 updateDBLock = threading.Lock()
 
@@ -45,6 +47,20 @@ async def randint(ctx,minimum,maximum):
     await ctx.send(random.randint(minimum,maximum))
 
 @bot.command()
+async def sendlink(ctx):
+    file = ctx.message.attachments[0]
+    print(file.content_type)
+    print('ok')
+    if file.content_type.split('/')[0]=='image':
+        print('cool')
+        api = catboxAPI(os.getenv('CATBOX_TOKEN'))
+        catboxURL = "https://files.catbox.moe/"+api.upload_from_url(file.url)
+        print(catboxURL)
+        await ctx.send(catboxURL)
+    else:
+        await ctx.send("Not an image")
+
+@bot.command()
 async def repeat(ctx,n,*,message):
     n = int(n)
     output = ''.join([message+' ']*n)
@@ -70,6 +86,20 @@ async def startSeason(ctx):
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
+async def setDeadline(ctx,timestamp):
+    if not timestamp.isnumeric():
+        await ctx.send("Error! Invalid timestamp!")
+        return
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+        print(seasonInfoDB)
+        seasonInfoDB['deadline'] = timestamp
+        SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+    await ctx.send(f"Success! The deadline is now <t:{timestamp}:F>, which is <t:{timestamp}:R>!")
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
 async def startResponding(ctx,*,prompt):
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     period = seasonInfoDB['period']
@@ -86,9 +116,12 @@ async def startResponding(ctx,*,prompt):
         seasonInfoDB['period'] = 'responding'
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     channel = bot.get_channel(channelIDs['prompts'])
-    await channel.send(f"Round {str(currentRound)} has started! Your prompt is: \n"+
-                       f"```{prompt}```\n"+
-                       "Deadline is sometime. I'll implement a deadline feature later.")
+    botMessage = (f"Round {str(currentRound)} has started! Your prompt is: \n"+
+                       f"```{prompt}```")
+    deadline = seasonInfoDB['deadline']
+    if deadline:
+        botMessage += f'\nRespond by <t:{deadline}:F>, which is <t:{deadline}:R>.'
+    await channel.send(botMessage)
     await ctx.send(f"Success! Responding period has started!")
 
 @bot.command()
@@ -103,6 +136,7 @@ async def closeResponding(ctx):
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         seasonInfoDB['period'] = 'preVoting'
+        seasonInfoDB['deadline'] = None
         # get the number of responses sent 
         responseDB = RespondingPeriod.getResponseDB()
         messagesAsKeys = RespondingPeriod.userKeysToMessageKeys(responseDB)
@@ -122,6 +156,8 @@ async def closeResponding(ctx):
     await channel.send(f"Round {str(currentRound)} responding is now closed!")
     await channel.send(f"We received {str(responseCount)} responses from "
                        +f"{str(len(responseDB))} contestants.")
+    if seasonInfoDB['currentRound']==1:
+        return
     if len(DNPs)==0:
         await channel.send("All contestants sent responses. Hooray!")
     else:
@@ -151,8 +187,11 @@ async def startVoting(ctx):
     VotingPeriod.createVotingDBs(allScreens,keywordsPerSection)
     currentRound = seasonInfoDB['currentRound']
     channel = bot.get_channel(channelIDs['voting'])
-    await channel.send(f"Round {str(currentRound)} voting has started!\n"
-                       +f"https://docs.google.com/spreadsheets/d/{sheet_id}")
+    botMessage = f"Round {str(currentRound)} voting has started!"
+    deadline = seasonInfoDB['deadline']
+    if deadline:
+        botMessage += f'\nVote by <t:{deadline}:F>, which is <t:{deadline}:R>.'
+    await channel.send(botMessage+f"\nhttps://docs.google.com/spreadsheets/d/{sheet_id}")
     
 @bot.command()
 @commands.is_owner()
@@ -166,6 +205,7 @@ async def closeVoting(ctx):
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         seasonInfoDB['period'] = 'results'
+        seasonInfoDB['deadline'] = None
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     currentRound = seasonInfoDB['currentRound']
     channel = channel = bot.get_channel(channelIDs['voting'])
@@ -216,7 +256,7 @@ async def updateDisplayNames(ctx):
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         for userID in seasonInfoDB['aliveContestants']:
             user = await bot.fetch_user(int(userID))
-            seasonInfoDB['aliveContestants'][userID] = user.display_name
+            seasonInfoDB['aliveContestants'][userID]['displayName'] = user.display_name
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
 
 @bot.command()
@@ -230,6 +270,7 @@ async def respond(ctx,*,response):
     aliveContestants = seasonInfoDB['aliveContestants']
     userID = str(ctx.message.author.id)
     messageID = str(ctx.message.id)
+    print('ok')
     # check if the user is alive
     # if not, add them to the pool if it's r1, but reject their response if it's after r1
     if userID not in aliveContestants:
@@ -239,7 +280,8 @@ async def respond(ctx,*,response):
         else:
             with updateDBLock:
                 user = await bot.fetch_user(int(userID))
-                seasonInfoDB['aliveContestants'][userID] = user.display_name
+                seasonInfoDB['aliveContestants'][userID] = {}
+                seasonInfoDB['aliveContestants'][userID]['displayName'] = user.display_name
                 SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     botMessage = RespondingPeriod.addResponse(userID,response,messageID)
     await ctx.send(botMessage)
@@ -280,6 +322,34 @@ async def edit(ctx,*,newResponse):
         user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has edited their response: `{newResponse}`')
+
+@bot.command()
+@commands.dm_only()
+async def setbook(ctx):
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+        userID = str(ctx.message.author.id)
+        # only alive contestants can set books
+        if userID not in seasonInfoDB['aliveContestants']:
+            await ctx.send('Error! You are not an alive contestant!')
+            return
+        attachments = ctx.message.attachments
+        if len(attachments)==0:
+            await ctx.send("Error! You did not attach an image!")
+            return
+        file = attachments[0]
+        if file.content_type.split('/')[0]=='image':
+            api = catboxAPI(os.getenv('CATBOX_TOKEN'))
+            catboxURL = "https://files.catbox.moe/"+api.upload_from_url(file.url)
+            seasonInfoDB['aliveContestants'][userID]['bookLink'] = catboxURL
+            SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+            await ctx.send("Success! Your book has been set to the image you sent!")
+            channel = bot.get_channel(channelIDs['log'])
+            user = await bot.fetch_user(int(userID))
+            username = user.name
+            await channel.send(f'{username} has edited their book: `{catboxURL}`')
+        else:
+            await ctx.send("Error! The attached file is not an image!")
 
 @respond.error
 @edit.error
@@ -374,6 +444,6 @@ async def voteDeleteError(ctx,error):
         await ctx.send(f"Something is wrong. Please report this error to SergeantSnivy.")
 
 
-bot.run(os.getenv('TOKEN')) # run the bot with the token
+bot.run(os.getenv('BOT_TOKEN')) # run the bot with the token
 
 

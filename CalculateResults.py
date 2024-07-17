@@ -1,6 +1,7 @@
 import json
 import pandas as pd
 import gspread
+from gspread.utils import ValueInputOption
 import math
 import threading
 import PrivateStuff as priv
@@ -10,6 +11,7 @@ from scipy.stats import skew
 from VotingPeriod import getScreensDB, getVotesDB
 from RespondingPeriod import getResponseDB, userKeysToMessageKeys
 from SeasonInfo import getSeasonInfoDB
+from Misc import sheetsRowArray
 import SeasonInfo
 
 updateDBLock = threading.Lock()
@@ -65,7 +67,11 @@ def createScoresDB():
         voteScores = scoresDB[responseID]['voteScores']
         scoresDB[responseID]['finalScore'] = sum(voteScores)/len(voteScores)
         scoresDB[responseID]['stdev'] = pstdev(voteScores)
-        scoresDB[responseID]['skew'] = skew(voteScores)
+        # handle invalid skews
+        if len(voteScores)<3 or all([voteScores[n]==voteScores[0] for n in range(1,len(voteScores))]):
+            scoresDB[responseID]['skew'] = 0
+        else:
+            scoresDB[responseID]['skew'] = skew(voteScores)
     print('cool')
     with open(getScoresFileName(),'w') as f:
         json.dump(scoresDB,f,indent=4)
@@ -84,6 +90,10 @@ def getElimsDB():
         elimsDB = json.load(f)
     return elimsDB
 
+# note to self: when the API encounters a merged cell,
+# it looks at the subarray of values with positions of cells in the merge,
+# takes the top left one, and skips over the rest.
+# to adapt to this, put arbitrary values in positions that you want to be skipped over
 def getSortedLeaderboards():
     scoresDB = getScoresDB()
     leaderboard = sorted(scoresDB.items(), key=lambda x: (x[1]['finalScore'],-1*x[1]['skew']),reverse=True)
@@ -93,21 +103,31 @@ def getSortedLeaderboards():
     seasonInfoDB = getSeasonInfoDB()
     currentRound = seasonInfoDB['currentRound']
     prompt = seasonInfoDB['prompts'][currentRound-1]
-    formattedLB.append(tuple([prompt]+[None]*7))
-    headers = ('Rank','Contestant','Response','Score','St. Dev','Skew','Votes','VRD')
+    formattedLB.append(tuple([prompt]+[None]*5))
+    headers = ('Rank','Book','Contestant/\nResponse','Score','StDev/\nSkew','VRD')
     formattedLB.append(headers)
     prevRank = 0
     pastPlacers = []
     for row in leaderboard:
         dataDict = row[1]
         userID = dataDict['author']
-        contestant = getSeasonInfoDB()['aliveContestants'][userID]
+        userData = getSeasonInfoDB()['aliveContestants'][userID]
+        if 'bookLink' in userData:
+            book = f'=image("{userData['bookLink']}")'
+        else:
+            book = '=image("https://files.catbox.moe/q6k2t9.png")'
+        contestant = userData['displayName']
         response = dataDict['content']
+        # sanitize potential formulas
+        if response[0] in ['=','+']:
+            response = "'" + response
         score = dataDict['finalScore']
         stdev = dataDict['stdev']
         skew = dataDict['skew']
         votes = len(dataDict['voteScores'])
-        VRD = str(sorted(dataDict['voteScores'],reverse=True))
+        VRD = ('''=lambda(votes,SPARKLINE(transpose(sort(transpose(ARRAYFORMULA(FILTER(votes, votes <> "")'''
+               +'''-AVERAGE(votes))),1,FALSE)),{"charttype","column";"ymin",-AVERAGE(votes);"ymax",1-AVERAGE(votes)}))'''
+               +f'({sheetsRowArray(sorted(dataDict['voteScores'],reverse=True))})')
         print(pastPlacers)
         if userID in pastPlacers:
             rank = '-'
@@ -117,7 +137,10 @@ def getSortedLeaderboards():
             prevRank+=1
             contestantScorePairs.append((userID,score))
         pastPlacers.append(userID)
-        formattedLB.append((rank,contestant,response,score,stdev,skew,votes,VRD))
+        row1 = (rank,book,contestant,score,stdev,VRD)
+        row2 = (None,None,response,score,skew,None)
+        formattedLB.append(row1)
+        formattedLB.append(row2)
     return formattedLB,contestantScorePairs
 
 def fill_excel_sheet(file_path,leaderboard):
@@ -140,7 +163,7 @@ def create_google_sheet(leaderboard):
         worksheet.resize(rows=len(leaderboard), cols=len(leaderboard[0]))
     except:
         worksheet = rV.add_worksheet(title=f"Results", rows=len(leaderboard), cols=len(leaderboard[0]))
-    worksheet.update(leaderboard)
+    worksheet.update(leaderboard,value_input_option=ValueInputOption.user_entered)
     return rV.id
   
 def generateResults():
@@ -160,7 +183,7 @@ def awardElimsAndPrizes(contestantScorePairs):
         userID = pair[0]
         print(userID)
         print(type(userID))
-        elimDisplayNames.append(seasonInfoDB['aliveContestants'][userID])
+        elimDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
         del seasonInfoDB['aliveContestants'][userID]
     prizers = prizingContestants(0.2,contestantScorePairs)
     prizerDisplayNames = []
@@ -169,7 +192,7 @@ def awardElimsAndPrizes(contestantScorePairs):
         print(pair)
         userID = pair[0]
         seasonInfoDB['currentPrizers'].append(userID)
-        prizerDisplayNames.append(seasonInfoDB['aliveContestants'][userID])
+        prizerDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
     print(seasonInfoDB)
     SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     return prizerDisplayNames, elimDisplayNames

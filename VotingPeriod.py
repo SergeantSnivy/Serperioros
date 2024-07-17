@@ -97,6 +97,7 @@ def addVote(userID,keyword,letters):
     allScreens = getScreensDB()
     if keyword not in allScreens:
         return f'Error: `{keyword}` is not a valid keyword!'
+    keyword = keyword.upper()
     with accessDBLock:
         votesDB = getVotesDB()
         # check if user has voted previously; if so, make some additional checks
@@ -113,6 +114,8 @@ def addVote(userID,keyword,letters):
                 return (f'Error: You have already sent a vote on screen {keyword}!\n'
                         +'To edit your vote, use `sp/editvote [keyword] [newvote]`.')
         keysOnScreen = [keyletter for keyletter in allScreens[keyword]]
+        if len(keysOnScreen)<=26:
+            letters = letters.upper()
         message = checkVoteValidity(letters,keysOnScreen)
         # if no errors have been raised, add vote to the DB
         if not message:

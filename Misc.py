@@ -38,5 +38,7 @@ def singularOrPluralFromNumber(messageString):
     messageString = re.sub('{(.*?)/(.*?)}',wordReplacement,messageString)
     return messageString
 
-
+def sheetsRowArray(array):
+    arrayStr = str(array)
+    return '{'+str(array)[1:len(arrayStr)-1]+'}'
     

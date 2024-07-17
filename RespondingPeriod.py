@@ -2,6 +2,7 @@ import json
 import threading
 from Misc import singularOrPluralFromNumber as sopN
 from SeasonInfo import getSeasonInfoDB, seasonInfoFileName
+from TechnicalTools import reformat, getWords
 
 updateDBLock = threading.Lock()
 
@@ -19,6 +20,12 @@ def getResponsesPerPerson():
 
 def getCurrentPrizers():
     return getSeasonInfoDB()['currentPrizers']
+
+def getLimitType():
+    return getSeasonInfoDB()['limitType']
+
+def getLimit():
+    return getSeasonInfoDB()['limit']
 
 def getRespondingFileName():
     return f'{getSeasonName()}R{str(getCurrentRound())}Responses.json'
@@ -61,10 +68,21 @@ def maxResponses(contestant):
     return getResponsesPerPerson()
 
 # TODO: sanitize sheets formula characters (=,+)
-def addResponse(contestant,response,messageID):
+def addResponse(contestant,response:str,messageID):
+    if len(response)>1900:
+        return f"Failed! Your response has {len(response)} characters, which is too long!"
+    response = reformat(response)
+    if getLimitType() == 'word':
+        numWords = len(getWords(response))
+        wordLimit = getLimit()
+        if numWords>wordLimit:
+            return f"Failed! Your response has {str(numWords)} words, which exceeds the limit of {str(wordLimit)}!"
+    elif getLimitType() == 'char':
+        numChars = len(response)
+        charLimit = getLimit()
+        if numWords>wordLimit:
+            return f"Failed! Your response has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     with updateDBLock:
-        if len(response)>1900:
-            return f"Failed! Your response has {len(response)} characters, which is too long!"
         responseDB = getResponseDB()
         if contestant in responseDB:
             numRecorded = len(responseDB[contestant])
@@ -91,9 +109,19 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         return "Failed! You can't have less than 1 response, silly!"
     if responseNum>maxResponses(contestant):
         return sopN(f'Failed! You only get [{str(maxResponses(contestant))}] response{{/s}} this round, not {str(responseNum)}!')
+    if len(newResponse)>1900:
+        return f"Failed! Your response edit has {len(newResponse)} characters, which is too long!"
+    if getLimitType() == 'word':
+        numWords = len(getWords(newResponse))
+        wordLimit = getLimit()
+        if numWords>wordLimit:
+            return f"Failed! Your response edit has {str(numWords)} words, which exceeds the limit of {str(wordLimit)}!"
+    elif getLimitType() == 'char':
+        numChars = len(newResponse)
+        charLimit = getLimit()
+        if numWords>wordLimit:
+            return f"Failed! Your response edit has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     with updateDBLock:
-        if len(newResponse)>1900:
-            return f"Failed! Your response edit has {len(newResponse)} characters, which is too long!"
         responseDB = getResponseDB()
         if contestant in responseDB:
             numRecorded = len(responseDB[contestant])
