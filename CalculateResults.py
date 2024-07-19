@@ -166,36 +166,39 @@ def create_google_sheet(leaderboard):
     worksheet.update(leaderboard,value_input_option=ValueInputOption.user_entered)
     return rV.id
   
-def generateResults():
+def generateResults(getSheet=True):
     createScoresDB()
     formattedLB, contestantScorePairs = getSortedLeaderboards()
-    sheetID = create_google_sheet(formattedLB)
-    print(sheetID)
+    if getSheet:
+        sheetID = create_google_sheet(formattedLB)
+        print(sheetID)
+    else:
+        sheetID = None
     return formattedLB, contestantScorePairs, sheetID
 
 def awardElimsAndPrizes(contestantScorePairs):
     seasonInfoDB = getSeasonInfoDB()
     if seasonInfoDB['elimFormat']=='vanilla':
         elims = eliminatedContestants(0.3,contestantScorePairs)
-    elimDisplayNames = []
+    elimIDs = []
     for pair in elims:
         print(pair)
         userID = pair[0]
         print(userID)
         print(type(userID))
-        elimDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
+        elimIDs.append(userID)
         del seasonInfoDB['aliveContestants'][userID]
     prizers = prizingContestants(0.2,contestantScorePairs)
-    prizerDisplayNames = []
+    prizerIDs = []
     seasonInfoDB['currentPrizers'] = []
     for pair in prizers:
         print(pair)
         userID = pair[0]
         seasonInfoDB['currentPrizers'].append(userID)
-        prizerDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
+        prizerIDs.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
     print(seasonInfoDB)
     SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
-    return prizerDisplayNames, elimDisplayNames
+    return prizerIDs, elimIDs
     
 
 

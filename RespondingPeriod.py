@@ -1,7 +1,7 @@
 import json
 import threading
-from Misc import singularOrPluralFromNumber as sopN
-from SeasonInfo import getSeasonInfoDB, seasonInfoFileName
+from Misc import singularOrPluralFromNumber as sopN, singularOrPluralFromList as sopL, listToString as lts
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB
 from TechnicalTools import reformat, getWords
 
 updateDBLock = threading.Lock()
@@ -80,7 +80,7 @@ def addResponse(contestant,response:str,messageID):
     elif getLimitType() == 'char':
         numChars = len(response)
         charLimit = getLimit()
-        if numWords>wordLimit:
+        if numChars>charLimit:
             return f"Failed! Your response has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     with updateDBLock:
         responseDB = getResponseDB()
@@ -119,7 +119,7 @@ def editResponse(contestant,responseNum,newResponse,messageID):
     elif getLimitType() == 'char':
         numChars = len(newResponse)
         charLimit = getLimit()
-        if numWords>wordLimit:
+        if numChars>charLimit:
             return f"Failed! Your response edit has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     with updateDBLock:
         responseDB = getResponseDB()
@@ -136,6 +136,43 @@ def editResponse(contestant,responseNum,newResponse,messageID):
             message += f'#{str(responseNum)} '
         message += f'response now reads:\n`{newResponse}`'
     return message
+
+def closeResponding():
+    seasonInfoDB = getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    if period != 'responding':
+        return (f"Error! Current period is {period}!", None)
+    with updateDBLock:
+        seasonInfoDB = getSeasonInfoDB()
+        seasonInfoDB['period'] = 'preVoting'
+        seasonInfoDB['deadline'] = None
+        # get the number of responses sent 
+        responseDB = getResponseDB()
+        messagesAsKeys = userKeysToMessageKeys(responseDB)
+        responseCount = len(messagesAsKeys)
+        seasonInfoDB['numResponses'] = responseCount
+        # eliminate people if they didn't send a response
+        DNPs = []
+        for aliveContestant in seasonInfoDB['aliveContestants']:
+            if aliveContestant not in responseDB:
+                DNPs.append(aliveContestant)
+        if len(DNPs)!=0:
+            for DNP in DNPs:
+                del seasonInfoDB['aliveContestants'][DNP]
+        updateSeasonInfoDB(seasonInfoDB)
+    currentRound = seasonInfoDB['currentRound']
+    message = (f"Round {str(currentRound)} responding is now closed!\n"+
+               f"We received {str(responseCount)} responses from {str(len(responseDB))} contestants.")
+    if seasonInfoDB['currentRound']!=1:
+        if len(DNPs)==0:
+            message += ("\nAll contestants sent responses. Hooray!")
+        else:
+            DNPDisplayNames = []
+            for i,userID in enumerate(DNPs):
+                DNPDisplayNames.append(seasonInfoDB[userID]['displayName'])
+            message += (sopL(f"{lts(DNPDisplayNames)} ") 
+                        +"failed to send responses and will be eliminated. So sad.")
+    return (message,'prompts',DNPs)
 
 
 

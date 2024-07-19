@@ -1,8 +1,10 @@
-from ResponseClass import Response
+from RespondingPeriod import getResponseDB, userKeysToMessageKeys
 from GenerateVoting import generate_voting
+from datetime import datetime
 from Misc import singularOrPluralFromList as sopL
 from Misc import listToString as lts
-from SeasonInfo import getSeasonInfoDB, seasonInfoFileName
+from Misc import addDays, addMinutes
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB
 import json
 import threading
 import re
@@ -22,7 +24,7 @@ def getVotesFileName():
 def getKeywordsPerSectionFileName():
     return f'{getSeasonName()}R{str(getCurrentRound())}KeywordsPerSection.json'
 
-accessDBLock = threading.Lock()
+updateDBLock = threading.Lock()
 
 # screens DB is formatted like {keyword: {A: response, B: response, etc}}
 # keywords per section DB is formatted like {sectionName: [keywordA, keywordB, etc]}
@@ -54,6 +56,30 @@ def getVotesDB():
 def updateVotesDB(newDB):
     with open(getVotesFileName(),'w') as f:
         json.dump(newDB,f,indent=4)
+
+def startVoting():
+    with updateDBLock:
+        seasonInfoDB = getSeasonInfoDB()
+        period = seasonInfoDB['period']
+        if period != 'preVoting':
+            return (f"Error! Current period is {period}!", None)
+        tempDict = getResponseDB()
+        responseDict = userKeysToMessageKeys(tempDict)
+        uniTable,allScreens,keywordsPerSection,sheet_id = generate_voting(responseDict)
+        createVotingDBs(allScreens,keywordsPerSection)
+        currentRound = seasonInfoDB['currentRound']
+        botMessage = f"Round {str(currentRound)} voting has started!"
+        deadline = None
+        if seasonInfoDB['deadlineMode']=='min':
+            deadline = addMinutes(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+            botMessage += f'\nVote by <t:{deadline}:T>, which is <t:{deadline}:R>.'
+        elif seasonInfoDB['deadlineMode']=='day':
+            deadline = addDays(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+            botMessage += f'\nVote by <t:{deadline}:F>, which is <t:{deadline}:R>.'
+        seasonInfoDB['deadline'] = deadline
+        seasonInfoDB['period'] = 'voting'
+        updateSeasonInfoDB(seasonInfoDB)
+    return (botMessage+f"\nhttps://docs.google.com/spreadsheets/d/{sheet_id}",'voting')
 
 def checkVoteValidity(voteLetters,keysOnScreen):
     message = ''
@@ -98,7 +124,7 @@ def addVote(userID,keyword,letters):
     if keyword not in allScreens:
         return f'Error: `{keyword}` is not a valid keyword!'
     keyword = keyword.upper()
-    with accessDBLock:
+    with updateDBLock:
         votesDB = getVotesDB()
         # check if user has voted previously; if so, make some additional checks
         if userID in votesDB:
@@ -108,11 +134,11 @@ def addVote(userID,keyword,letters):
             if keyword not in keywordsPerSectionDB[userCurrentSection]:
                 return (f'Error: You have already started voting on section `{userCurrentSection}`!\n'
                         +f'Screen `{keyword}` is in a different section.')
-            # check if user has already voted on this screen
+            # check if user has already voted on this screen; if so, change the text at the end
             print(votesDB[userID]['screens'])
-            if keyword in votesDB[userID]['screens']:
-                return (f'Error: You have already sent a vote on screen {keyword}!\n'
-                        +'To edit your vote, use `sp/editvote [keyword] [newvote]`.')
+            alreadyVotedOnScreen = keyword in votesDB[userID]['screens']
+        else:
+            alreadyVotedOnScreen = False
         keysOnScreen = [keyletter for keyletter in allScreens[keyword]]
         if len(keysOnScreen)<=26:
             letters = letters.upper()
@@ -131,14 +157,17 @@ def addVote(userID,keyword,letters):
             votesDB[userID]['screens'][keyword] = letters
             updateVotesDB(votesDB)
             message=f"Success! Your vote of `{keyword} {letters}` has been logged!"
+            if alreadyVotedOnScreen:
+                message=f"Success! Your vote on screen `{keyword}` has been edited to `{letters}`!"
     return message
 
 def editVote(userID,keyword,letters):
     # make sure keyword exists
     allScreens = getScreensDB()
+    keyword = keyword.upper()
     if keyword not in allScreens:
         return f'Error: `{keyword}` is not a valid keyword!'
-    with accessDBLock:
+    with updateDBLock:
         votesDB = getVotesDB()
         # make sure user has already sent at least one vote 
         if userID not in votesDB:
@@ -147,12 +176,14 @@ def editVote(userID,keyword,letters):
         if keyword not in votesDB[userID]['screens']:
             return f'Error! You have not voted on screen {keyword} yet!'
         keysOnScreen = [keyletter for keyletter in allScreens[keyword]]
+        if len(keysOnScreen)<=26:
+            letters = letters.upper()
         message = checkVoteValidity(letters,keysOnScreen)
         # if no errors have been raised, edit the vote in the DB
         if not message:
             votesDB[userID]['screens'][keyword] = letters
             updateVotesDB(votesDB)
-            message=f"Success! Your vote on screen `{keyword}` is now `{letters}`!"
+            message=f"Success! Your vote on screen `{keyword}` has been edited to `{letters}`!"
     return message
 
 def deleteVote(userID,keyword):
@@ -160,7 +191,7 @@ def deleteVote(userID,keyword):
     allScreens = getScreensDB()
     if keyword not in allScreens:
         return f'Error: `{keyword}` is not a valid keyword!'
-    with accessDBLock:
+    with updateDBLock:
         votesDB = getVotesDB()
         # make sure user has already sent at least one vote 
         if userID not in votesDB:
@@ -175,7 +206,7 @@ def deleteVote(userID,keyword):
         return f"Success! Your vote on screen `{keyword}` has been deleted!"
     
 def clearVotes(userID):
-    with accessDBLock:
+    with updateDBLock:
         votesDB = getVotesDB()
         # make sure user has already sent at least one vote 
         if userID not in votesDB:
@@ -193,6 +224,22 @@ def getVPR():
         for screenName in screensDict:
             numScores += len(screensDict[screenName])
     return numScores/numResponses
+
+def closeVoting():
+    seasonInfoDB = getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    if period != 'voting':
+        return (f"Error! Current period is {period}!",None)
+    with updateDBLock:
+        seasonInfoDB = getSeasonInfoDB()
+        seasonInfoDB['period'] = 'results'
+        seasonInfoDB['deadline'] = None
+        updateSeasonInfoDB(seasonInfoDB)
+    currentRound = seasonInfoDB['currentRound']
+    channel = 'voting'
+    botMessage = f"Round {str(currentRound)} voting is closed! "
+    VPR = round(getVPR(),2)
+    return (botMessage+f"We got an average of {str(VPR)} votes per response.",'voting')
         
     
 

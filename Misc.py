@@ -41,4 +41,13 @@ def singularOrPluralFromNumber(messageString):
 def sheetsRowArray(array):
     arrayStr = str(array)
     return '{'+str(array)[1:len(arrayStr)-1]+'}'
+
+def addDays(timestamp,numToAdd):
+    timestamp += numToAdd*86400
+    # set to floor of hour
+    timestamp -= timestamp % 3600
+    return timestamp
+
+def addMinutes(timestamp,numToAdd):
+    return int(timestamp + numToAdd*60)
     
