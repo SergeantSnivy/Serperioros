@@ -100,6 +100,7 @@ def getSortedLeaderboards():
     print(leaderboard)
     formattedLB = []
     contestantScorePairs = []
+    statsRows = []
     seasonInfoDB = getSeasonInfoDB()
     currentRound = seasonInfoDB['currentRound']
     prompt = seasonInfoDB['prompts'][currentRound-1]
@@ -136,12 +137,13 @@ def getSortedLeaderboards():
             rank = '#'+str(prevRank+1)
             prevRank+=1
             contestantScorePairs.append((userID,score))
+        statsRows.append((contestant,response,score,stdev,skew))
         pastPlacers.append(userID)
         row1 = (rank,book,contestant,score,stdev,VRD)
         row2 = (None,None,response,score,skew,None)
         formattedLB.append(row1)
         formattedLB.append(row2)
-    return formattedLB,contestantScorePairs
+    return formattedLB,contestantScorePairs,statsRows
 
 def fill_excel_sheet(file_path,leaderboard):
     with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
@@ -168,13 +170,13 @@ def create_google_sheet(leaderboard):
   
 def generateResults(getSheet=True):
     createScoresDB()
-    formattedLB, contestantScorePairs = getSortedLeaderboards()
+    formattedLB, contestantScorePairs, statsRows = getSortedLeaderboards()
     if getSheet:
         sheetID = create_google_sheet(formattedLB)
         print(sheetID)
     else:
         sheetID = None
-    return formattedLB, contestantScorePairs, sheetID
+    return formattedLB, contestantScorePairs, statsRows, sheetID
 
 def awardElimsAndPrizes(contestantScorePairs):
     seasonInfoDB = getSeasonInfoDB()

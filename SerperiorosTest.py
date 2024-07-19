@@ -8,6 +8,7 @@ import GenerateVoting
 import VotingPeriod
 import CalculateResults
 import SeasonInfo
+from Stats import updateAllStats
 from Misc import listToString as lts, singularOrPluralFromList as sopL, addDays, addMinutes
 import threading
 from datetime import datetime
@@ -294,7 +295,7 @@ async def closeVoting(ctx):
 @commands.is_owner()
 @commands.dm_only()
 async def prelimResults(ctx):
-    _,_,sheetID = CalculateResults.generateResults()
+    _,_,_,sheetID = CalculateResults.generateResults()
     await ctx.send(f"https://docs.google.com/spreadsheets/d/{sheetID}")
 
 @bot.command()
@@ -310,7 +311,8 @@ async def applyResults(ctx):
     if period !='results':
         await ctx.send(f"Error! Current period is {period}!")
         return
-    _, contestantScorePairs, _ = CalculateResults.generateResults(getSheet=False)
+    _, contestantScorePairs, statsRows, _ = CalculateResults.generateResults(getSheet=False)
+    updateAllStats(statsRows)
     prizerIDs, elimIDs = CalculateResults.awardElimsAndPrizes(contestantScorePairs)
     server: discord.Guild = bot.get_guild(serverID)
     prizerMembers = [server.get_member(userID) for userID in prizerIDs]
