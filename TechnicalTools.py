@@ -6,6 +6,6 @@ def reformat(response:str):
     # replace tabs (stats sheet delimiter)
     response = re.sub('\t',' ',response)
     return response
-)
+
 def getWords(response:str):
     return re.split('\s+',response)

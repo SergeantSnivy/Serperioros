@@ -221,14 +221,18 @@ async def executeDeadline():
     if deadline != potentialNewDeadline or period != potentialNewPeriod:
         return
     # now we're good to execute
-    if period == 'responding':
-        DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
-        await removeRoleFromList(DNPList)
-        await doTaskAndSendMessage(VotingPeriod.startVoting)
-        await executeDeadline()
-    if period == 'voting':
-        await doTaskAndSendMessage(VotingPeriod.closeVoting)
-        return
+    with updateDBLock:
+        if period == 'responding':
+            DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
+            server: discord.Guild = bot.get_guild(serverID)
+            DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
+            await removeRoleFromList(roleIDs['alive'],DNPMembers)
+            await addRoleToList(roleIDs['eliminated'],DNPMembers)
+            await doTaskAndSendMessage(VotingPeriod.startVoting)
+            await executeDeadline()
+        if period == 'voting':
+            await doTaskAndSendMessage(VotingPeriod.closeVoting)
+            return
 
 @bot.command()
 @commands.is_owner()
@@ -272,7 +276,11 @@ async def startResponding(ctx,*,prompt):
 @commands.dm_only()
 async def closeResponding(ctx):
     DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
-    await removeRoleFromList(DNPList)
+    if DNPList:
+        server: discord.Guild = bot.get_guild(serverID)
+        DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
+        await removeRoleFromList(roleIDs['alive'],DNPMembers)
+        await addRoleToList(roleIDs['eliminated'],DNPMembers)
 
 
 @bot.command()
@@ -306,22 +314,33 @@ async def applyResults(ctx):
     reply = await getConfirmationMessage(ctx)
     if not reply or reply.lower() != "yes":
         await ctx.send("Results will not be applied.")
+        return
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     period = seasonInfoDB['period']
     if period !='results':
         await ctx.send(f"Error! Current period is {period}!")
         return
     _, contestantScorePairs, statsRows, _ = CalculateResults.generateResults(getSheet=False)
-    updateAllStats(statsRows)
+    print('0')
+    statsSheetID = updateAllStats(statsRows)
+    print('0.5')
+    oldPrizerIDs = seasonInfoDB['currentPrizers']
     prizerIDs, elimIDs = CalculateResults.awardElimsAndPrizes(contestantScorePairs)
+    print(prizerIDs)
+    print(elimIDs)
     server: discord.Guild = bot.get_guild(serverID)
-    prizerMembers = [server.get_member(userID) for userID in prizerIDs]
+    prizerMembers = [await server.fetch_member(userID) for userID in prizerIDs]
+    print('1')
     await addRoleToList(roleIDs['prize'],prizerMembers)
-    elimMembers = [server.get_member(userID) for userID in elimIDs]
-    await removeRoleFromList(roleIDs['eliminated',elimMembers])
-    prizerNames = SeasonInfo.getDisplayNamesFromIDs(prizerIDs)
-    elimNames = SeasonInfo.getDisplayNamesFromIDs(elimIDs)
+    oldPrizerMembers = [await server.fetch_member(userID) for userID in oldPrizerIDs]
+    await removeRoleFromList(roleIDs['prize'],oldPrizerMembers)
+    elimMembers = [await server.fetch_member(userID) for userID in elimIDs]
+    await removeRoleFromList(roleIDs['alive'],elimMembers)
+    await addRoleToList(roleIDs['eliminated'],elimMembers)
+    prizerNames = SeasonInfo.getDisplayNamesFromIDs(prizerIDs,True)
+    elimNames = SeasonInfo.getDisplayNamesFromIDs(elimIDs,False)
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    print('2')
     with updateDBLock:
         seasonInfoDB['period'] = 'preResponding'
         seasonInfoDB['currentRound'] += 1
@@ -337,6 +356,7 @@ async def applyResults(ctx):
         with updateDBLock:
             seasonInfoDB['period'] = 'over'
             SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+    await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
 
 
 @bot.command()
@@ -380,7 +400,9 @@ async def respond(ctx,*,response):
         print(ctx.message.id)
         if botMessage[0]=='S':
             if dbNeedsUpdating:
-                await user.add_roles(getRole(roleIDs['alive']))
+                server: discord.Guild = bot.get_guild(serverID)
+                member = await server.fetch_member(userID) 
+                await member.add_roles(await getRole(roleIDs['alive']))
                 SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
             channel = bot.get_channel(channelIDs['log'])
             user = await bot.fetch_user(int(userID))
@@ -543,7 +565,7 @@ async def voteDeleteError(ctx,error):
     else:
         await ctx.send(f"Something is wrong. Please report this error to SergeantSnivy.")
 
-@startSeason.error
+'''@startSeason.error
 @setLimit.error
 @setDeadline.error
 @enforceDeadline.error
@@ -553,8 +575,8 @@ async def voteDeleteError(ctx,error):
 @startVoting.error
 @closeVoting.error
 @prelimResults.error
-@applyResults.error
-@updateDisplayNames.error
+#@applyResults.error
+@updateDisplayNames.error'''
 async def hostCommandError(ctx,error):
     if isinstance(error, commands.MissingRequiredArgument):
         await ctx.send("Error! Required argument missing!")

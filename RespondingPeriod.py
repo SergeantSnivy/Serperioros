@@ -141,7 +141,7 @@ def closeResponding():
     seasonInfoDB = getSeasonInfoDB()
     period = seasonInfoDB['period']
     if period != 'responding':
-        return (f"Error! Current period is {period}!", None)
+        return (f"Error! Current period is {period}!", None, None)
     with updateDBLock:
         seasonInfoDB = getSeasonInfoDB()
         seasonInfoDB['period'] = 'preVoting'
@@ -158,6 +158,7 @@ def closeResponding():
                 DNPs.append(aliveContestant)
         if len(DNPs)!=0:
             for DNP in DNPs:
+                seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
                 del seasonInfoDB['aliveContestants'][DNP]
         updateSeasonInfoDB(seasonInfoDB)
     currentRound = seasonInfoDB['currentRound']
@@ -169,8 +170,8 @@ def closeResponding():
         else:
             DNPDisplayNames = []
             for i,userID in enumerate(DNPs):
-                DNPDisplayNames.append(seasonInfoDB[userID]['displayName'])
-            message += (sopL(f"{lts(DNPDisplayNames)} ") 
+                DNPDisplayNames.append(seasonInfoDB['eliminatedContestants'][userID]['displayName'])
+            message += ("\n"+sopL(f"{lts(DNPDisplayNames)} ") 
                         +"failed to send responses and will be eliminated. So sad.")
     return (message,'prompts',DNPs)
 

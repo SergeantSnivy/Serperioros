@@ -130,6 +130,7 @@ def getSortedLeaderboards():
                +'''-AVERAGE(votes))),1,FALSE)),{"charttype","column";"ymin",-AVERAGE(votes);"ymax",1-AVERAGE(votes)}))'''
                +f'({sheetsRowArray(sorted(dataDict['voteScores'],reverse=True))})')
         print(pastPlacers)
+        statsRows.append((contestant,response,score,stdev,skew))
         if userID in pastPlacers:
             rank = '-'
             contestant = f'{contestant} [{str(pastPlacers.count(userID)+1)}]'
@@ -137,7 +138,6 @@ def getSortedLeaderboards():
             rank = '#'+str(prevRank+1)
             prevRank+=1
             contestantScorePairs.append((userID,score))
-        statsRows.append((contestant,response,score,stdev,skew))
         pastPlacers.append(userID)
         row1 = (rank,book,contestant,score,stdev,VRD)
         row2 = (None,None,response,score,skew,None)
@@ -189,6 +189,7 @@ def awardElimsAndPrizes(contestantScorePairs):
         print(userID)
         print(type(userID))
         elimIDs.append(userID)
+        seasonInfoDB['eliminatedContestants'][userID] = seasonInfoDB['aliveContestants'][userID]
         del seasonInfoDB['aliveContestants'][userID]
     prizers = prizingContestants(0.2,contestantScorePairs)
     prizerIDs = []
@@ -197,8 +198,10 @@ def awardElimsAndPrizes(contestantScorePairs):
         print(pair)
         userID = pair[0]
         seasonInfoDB['currentPrizers'].append(userID)
-        prizerIDs.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
+        prizerIDs.append(userID)
     print(seasonInfoDB)
+    print("Prizer IDs:")
+    print(prizerIDs)
     SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     return prizerIDs, elimIDs
     
