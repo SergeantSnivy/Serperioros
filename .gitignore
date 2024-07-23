@@ -1,6 +1,7 @@
 .env
 *.json
 *.xlsx
+*.csv
 PrivateStuff.py
 PrivateStuff.cpython-312.pyc
 __pycache__
