@@ -1,16 +1,14 @@
 import json
 import threading
-from Misc import singularOrPluralFromNumber as sopN, singularOrPluralFromList as sopL, listToString as lts
-from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB
+from Misc import singularOrPluralFromNumber as sopN, singularOrPluralFromList as sopL, listToString as lts, addDays, addMinutes
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
 from TechnicalTools import reformat, getWords
+from datetime import datetime
 
 updateDBLock = threading.Lock()
 
 def getCurrentRound():
     return getSeasonInfoDB()['currentRound']
-
-def getSeasonName():
-    return getSeasonInfoDB()['seasonName']
 
 def getAliveContestants():
     return getSeasonInfoDB()['aliveContestants']
@@ -82,6 +80,7 @@ def addResponse(contestant,response:str,messageID):
         charLimit = getLimit()
         if numChars>charLimit:
             return f"Failed! Your response has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
+    print("addResponse")
     with updateDBLock:
         responseDB = getResponseDB()
         if contestant in responseDB:
@@ -121,6 +120,7 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         charLimit = getLimit()
         if numChars>charLimit:
             return f"Failed! Your response edit has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
+    print("editResponse")
     with updateDBLock:
         responseDB = getResponseDB()
         if contestant in responseDB:
@@ -137,11 +137,35 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         message += f'response now reads:\n`{newResponse}`'
     return message
 
+async def startResponding():
+    with updateDBLock:
+        seasonInfoDB = getSeasonInfoDB()
+        currentRound = seasonInfoDB['currentRound']
+        createResponseDB()
+        prompt = seasonInfoDB['prompts'][-1]
+        seasonInfoDB['period'] = 'responding'
+        message = (f"Round {str(currentRound)} has started! Your prompt is: \n"+
+                        f"```{prompt}```")
+        limitType = {'char':'characters','word':'words'}[seasonInfoDB['limitType']]
+        limit = str(seasonInfoDB['limit'])
+        message += f"Your response must not exceed **{limit} {limitType}**, or it will be rejected."
+        deadline = None
+        if seasonInfoDB['deadlineMode']=='min':
+            deadline = addMinutes(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+            message += f'\nRespond by <t:{deadline}:T>, which is <t:{deadline}:R>.'
+        elif seasonInfoDB['deadlineMode']=='day':
+            deadline = addDays(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+            message += f'\nRespond by <t:{deadline}:F>, which is <t:{deadline}:R>.'
+        seasonInfoDB['deadline'] = deadline
+        updateSeasonInfoDB(seasonInfoDB)
+    return (message, "prompts")
+
 def closeResponding():
     seasonInfoDB = getSeasonInfoDB()
     period = seasonInfoDB['period']
     if period != 'responding':
         return (f"Error! Current period is {period}!", None, None)
+    print("attempting closeResponding")
     with updateDBLock:
         seasonInfoDB = getSeasonInfoDB()
         seasonInfoDB['period'] = 'preVoting'

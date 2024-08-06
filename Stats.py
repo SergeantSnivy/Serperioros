@@ -1,5 +1,5 @@
 import csv
-from SeasonInfo import seasonName, getSeasonInfoDB, updateSeasonInfoDB
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
 from statistics import pstdev
 from scipy.stats import norm
 import gspread
@@ -11,7 +11,7 @@ StatsInfo = {'Percentiles': (lambda rows: getPercentilePairs(rows), 'float'),
              'SRs': (lambda rows: getSRPairs(rows), 'float'),
              'StDev': (lambda rows: getStDevPairs(rows), 'float'),
              'Verbosity': (lambda rows: getVerbosityPairs(rows), 'int')}
-StatsFileName = lambda stat: seasonName+stat+".csv"
+StatsFileName = lambda stat: getSeasonName()+stat+".csv"
 
 def removeNonCountingResponses(statsRows):
     onlyCountingResponses = []
@@ -55,6 +55,15 @@ def createStatsSheets():
 def getPercentilePairs(statsRows):
     return [(row[0],row[2]) for row in statsRows]
 
+def getSRPairsFromContestantScorePairs(contestantScorePairs):
+    allScores = [pair[1] for pair in contestantScorePairs]
+    mean = sum(allScores)/len(allScores)
+    stdev = pstdev(allScores)
+    SRPairs = []
+    for userID, currentScore in contestantScorePairs:
+        SRPairs.append((userID,norm.cdf(currentScore,mean,stdev)))
+    return SRPairs
+
 def getSRPairs(statsRows):
     allScores = [row[2] for row in statsRows]
     mean = sum(allScores)/len(allScores)
@@ -93,10 +102,15 @@ def updateStatFile(CSVFileName,newPairs,numType):
     contestantsInFile = [row[1] for row in statsArray]
     # add new round to header
     statsArray[0].append("Round "+str(len(statsArray[0][5:])+1))
+    debuts = []
     # find each contestant's position in the stats sheet and then append their newest value
     for i,pair in enumerate(newPairs):
         #print(pair)
-        statsFilePos = contestantsInFile.index(pair[0])
+        if pair[0] in contestantsInFile:
+            statsFilePos = contestantsInFile.index(pair[0])
+        else:
+            debuts.append(pair)
+            continue
         currentRow = statsArray[statsFilePos]
         currentRow.append(pair[1])
         # recalcuclate total, average, stdev
@@ -107,6 +121,14 @@ def updateStatFile(CSVFileName,newPairs,numType):
         currentRow[iTotal] = sum(allValues)
         currentRow[iAvg] = sum(allValues)/len(allValues)
         currentRow[iStdev] = pstdev(allValues)
+    # add debuts
+    for contestant, value in debuts:
+        statsArray.append([0]*len(statsArray)[0])
+        currentRow = statsArray[-1]
+        currentRow[1] = contestant
+        currentRow[iTotal] = value
+        currentRow[iAvg] = value
+        currentRow[-1] = value
     #print(statsArray)
     statsArray = [statsArray[0]]+sorted(statsArray[1:],reverse=True,key=lambda x: float(x[2]))
     # redo ranks, convert all values to numbers so it plays nice with sheets
@@ -145,7 +167,7 @@ def updateEveryResponseFile(CSVFileName,newRows):
 
 def createSeasonGoogleSheet():
     client = gspread.authorize(priv.creds)
-    rV = client.copy(priv.stats_template_id,title=f"{seasonName} Stats Sheet")
+    rV = client.copy(priv.stats_template_id,title=f"{getSeasonName()} Stats Sheet")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
@@ -187,6 +209,45 @@ def updateAllStats(newRows):
     everyResponseArray = updateEveryResponseFile(StatsFileName('EveryResponse'),newRows)
     allStatsArrays.append(everyResponseArray)
     return updateGoogleSheet(allStatsArrays)
+
+def removeMostRecentRoundFromStatFile(CSVFileName):
+    statsArray = CSVToArray(CSVFileName)
+    firstRowLen = len(statsArray[0])
+    for i,row in enumerate(statsArray):
+        if len(row)==firstRowLen:
+            statsArray[i] = row[:firstRowLen-1]
+    ArrayToCSV(CSVFileName,statsArray)
+    return statsArray
+    
+def removeMostRecentRoundFromEveryResponseFile(CSVFileName):
+    everyResponseArray = CSVToArray(CSVFileName)
+    currentRound = getSeasonInfoDB()['currentRound']
+    newEveryResponseArray = [everyResponseArray[0]]
+    i=1
+    while i<len(everyResponseArray):
+        currentRow = everyResponseArray[i]
+        newEveryResponseArray.append(currentRow)
+        # duplicate entries will be consecutive, so just increment the index by an extra 1 to skip the duplicate
+        currentRowRound = int(currentRow[1])
+        if currentRound==currentRowRound:
+            i += 1
+        i += 1
+    ArrayToCSV(CSVFileName,newEveryResponseArray)
+    return newEveryResponseArray
+
+def removeMostRecentRoundFromAllStats():
+    allStatsArrays = []
+    for stat in StatsInfo:
+        statFileName = StatsFileName(stat)
+        statArray = removeMostRecentRoundFromStatFile(statFileName)
+        allStatsArrays.append(statArray)
+    everyResponseArray = removeMostRecentRoundFromEveryResponseFile(StatsFileName('EveryResponse'))
+    allStatsArrays.append(everyResponseArray)
+    return updateGoogleSheet(allStatsArrays)
+
+
+
+
 
 
 

@@ -8,7 +8,8 @@ import GenerateVoting
 import VotingPeriod
 import CalculateResults
 import SeasonInfo
-from Stats import updateAllStats
+from PrivateStuff import pathToBot
+from Stats import updateAllStats, removeMostRecentRoundFromAllStats
 from Misc import listToString as lts, singularOrPluralFromList as sopL, addDays, addMinutes
 import threading
 from datetime import datetime
@@ -32,16 +33,27 @@ bot = commands.Bot(command_prefix='sp/',owner_id=82629898316808192,intents=inten
 
 @bot.event
 async def on_ready():
+    owner = await bot.fetch_user(82629898316808192)
+    await owner.send("I'm online!")
     print(f"{bot.user} is ready and online!")
+    # get season name so it knows which directory to enter
+    os.chdir(pathToBot)
     try:
-        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        period = seasonInfoDB['period']
-        deadline = seasonInfoDB['deadline']
-        enforceDeadline = seasonInfoDB['enforceDeadline']
-        if deadline and period in ('responding','voting') and enforceDeadline:
-            await executeDeadline()
+        os.mkdir("metaInfo")
     except:
         pass
+    os.chdir("metaInfo")
+    with open('currentSeasonName.txt','w') as f:
+        seasonName = f.read()
+    os.chdir(pathToBot)
+    os.chdir(seasonName)
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    os.chdir(seasonInfoDB['seasonName'])
+    period = seasonInfoDB['period']
+    deadline = seasonInfoDB['deadline']
+    enforceDeadline = seasonInfoDB['enforceDeadline']
+    if deadline and period in ('responding','voting') and enforceDeadline:
+        await executeDeadline()
 
 async def getConfirmationMessage(ctx):
     def check(message):
@@ -54,6 +66,7 @@ async def getConfirmationMessage(ctx):
         return message.content
 
 async def doTaskAndSendMessage(func):
+    print("Performing "+func.__name__)
     with updateDBLock:
         message, channelName = func()
     if channelName:
@@ -64,6 +77,7 @@ async def doTaskAndSendMessage(func):
         await owner.send(message)
 
 async def doTaskSendMessageAndReturnExtras(func):
+    print("Performing "+func.__name__)
     with updateDBLock:
         message, channelName, extras = func()
     if channelName:
@@ -95,14 +109,20 @@ async def removeRoleFromList(roleID,memberList:list[discord.Member]):
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
-async def startSeason(ctx):
-    SeasonInfo.createSeasonInfoDB()
+async def removeAllTWOWRoles(ctx):
     server: discord.Guild = bot.get_guild(serverID)
     userList = server.members
     print(userList)
     for roleType in roleIDs:
         await removeRoleFromList(roleIDs[roleType],userList)
-    await ctx.send(f"Success! {SeasonInfo.seasonName} has started!")
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def startSeason(ctx,seasonName):
+    SeasonInfo.createSeasonInfoDB(seasonName)
+    await removeAllTWOWRoles(ctx)
+    await ctx.send(f"Success! {seasonName} has started!")
 
 @bot.command()
 @commands.is_owner()
@@ -113,12 +133,30 @@ async def setLimit(ctx,num,type):
         return
     if type not in ("word","char"):
         await ctx.send(f"Error! {type} is not a valid limit type!")
+    print("Setting limit")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         seasonInfoDB['limit'] = int(num)
         seasonInfoDB['limitType'] = type
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     await ctx.send(f"Success! The limit is now {num} {type}s!")
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def setPeriod(ctx,newPeriod):
+    if newPeriod not in ['preResponding','responding','preVoting','voting','results','over']
+        await ctx.send(f"Error! {newPeriod} is not a valid period!")
+        return
+    currentPeriod = SeasonInfo.getSeasonInfoDB()['period']
+    if newPeriod==currentPeriod:
+        await ctx.send(f"Error! {newPeriod} is already the current period!")
+    print("Setting period")
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+        seasonInfoDB['period'] = newPeriod
+        SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+    await ctx.send(f"Success! The period is now {newPeriod}!")
 
 @bot.command()
 @commands.is_owner()
@@ -132,6 +170,7 @@ async def setDeadline(ctx,timestamp):
     if timestamp==seasonInfoDB['deadline']:
         await ctx.send("Error! That's already the deadline!")
         return
+    print("Setting deadline")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         print(seasonInfoDB)
@@ -157,6 +196,7 @@ async def setDeadline(ctx,timestamp):
 @commands.is_owner()
 @commands.dm_only()
 async def enforceDeadline(ctx):
+    print("Attempting to enforce deadline")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if not seasonInfoDB['deadline']:
@@ -187,6 +227,7 @@ async def enforceDeadline(ctx):
 @commands.is_owner()
 @commands.dm_only()
 async def allowGrace(ctx):
+    print("Attempting to allow grace")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if not seasonInfoDB['enforceDeadline']:
@@ -211,6 +252,7 @@ async def executeDeadline():
         return f"Deadline has already passed. Something is wrong!"
     await asyncio.sleep(waitTime)
     # make sure I haven't allowed grace; if I have, cancel
+    print("Deadline up")
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     enforceDeadline = seasonInfoDB['enforceDeadline']
     if not enforceDeadline:
@@ -221,29 +263,55 @@ async def executeDeadline():
     if deadline != potentialNewDeadline or period != potentialNewPeriod:
         return
     # now we're good to execute
-    with updateDBLock:
-        if period == 'responding':
-            DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
-            server: discord.Guild = bot.get_guild(serverID)
-            DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
-            await removeRoleFromList(roleIDs['alive'],DNPMembers)
-            await addRoleToList(roleIDs['eliminated'],DNPMembers)
-            await doTaskAndSendMessage(VotingPeriod.startVoting)
-            await executeDeadline()
-        if period == 'voting':
-            await doTaskAndSendMessage(VotingPeriod.closeVoting)
-            return
+    if period == 'responding':
+        print('responding')
+        DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
+        server: discord.Guild = bot.get_guild(serverID)
+        DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
+        await removeRoleFromList(roleIDs['alive'],DNPMembers)
+        await addRoleToList(roleIDs['eliminated'],DNPMembers)
+        await doTaskAndSendMessage(VotingPeriod.startVoting)
+        await executeDeadline()
+    if period == 'voting':
+        print('voting')
+        await doTaskAndSendMessage(VotingPeriod.closeVoting)
+        return
 
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
 async def startResponding(ctx,*,prompt):
+    print("Attempting to start responding")
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    if period != 'preResponding':
+        await ctx.send(f"Error! Current period is {period}!")
+        return
+    limitType = seasonInfoDB['limitType']
+    limitNum = str(seasonInfoDB['limit'])
+    await ctx.send(f'The prompt will be as follows:\n`{prompt}`\n'+
+                   f'The limit is currently {limitNum} {limitType}s.\n'+
+                   'Is this correct? Reply "yes" within 10 seconds if so.')
+    reply = await getConfirmationMessage(ctx)
+    if not reply or reply.lower() != "yes":
+        await ctx.send("The prompt was not sent.")
+        return
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        period = seasonInfoDB['period']
-        if period != 'preResponding':
-            await ctx.send(f"Error! Current period is {period}!")
-            return
+        currentRound = seasonInfoDB['currentRound']
+        # failsafe against starting responding twice for some reason
+        if len(seasonInfoDB['prompts'])<currentRound:
+            seasonInfoDB['prompts'].append(prompt)
+        else:
+            seasonInfoDB['prompts'][currentRound-1]=prompt
+    await doTaskAndSendMessage(RespondingPeriod.startResponding)
+    await ctx.send("Success! Responding has started!")
+    enforceDeadline = SeasonInfo.getSeasonInfoDB()['enforceDeadline']
+    if enforceDeadline:
+        await executeDeadline()
+    '''
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         currentRound = seasonInfoDB['currentRound']
         RespondingPeriod.createResponseDB()
         if len(seasonInfoDB['prompts'])<currentRound:
@@ -270,12 +338,14 @@ async def startResponding(ctx,*,prompt):
         await ctx.send(f"Success! Responding period has started!")
     if deadline and seasonInfoDB['enforceDeadline']:
         await executeDeadline()
+    '''
 
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
 async def closeResponding(ctx):
     DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
+    await ctx.send("Success! Responding is closed!")
     if DNPList:
         server: discord.Guild = bot.get_guild(serverID)
         DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
@@ -288,6 +358,7 @@ async def closeResponding(ctx):
 @commands.dm_only()
 async def startVoting(ctx):
     await doTaskAndSendMessage(VotingPeriod.startVoting)
+    await ctx.send("Success! Voting has started!")
     enforceDeadline = SeasonInfo.getSeasonInfoDB()['enforceDeadline']
     if enforceDeadline:
         await executeDeadline()
@@ -297,14 +368,18 @@ async def startVoting(ctx):
 @commands.dm_only()
 async def closeVoting(ctx):
     await doTaskAndSendMessage(VotingPeriod.closeVoting)
+    await ctx.send("Success! Voting is closed!")
     
 
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
 async def prelimResults(ctx):
-    _,_,_,sheetID = CalculateResults.generateResults()
+    _,contestantScorePairs,_,sheetID = CalculateResults.generateResults()
     await ctx.send(f"https://docs.google.com/spreadsheets/d/{sheetID}")
+    if SeasonInfo.getSeasonInfoDB()['elimFormat']=='rollingAverage':
+        _,_,_,sheetID = CalculateResults.generatePhaseResults(contestantScorePairs)
+        await ctx.send(f"https://docs.google.com/spreadsheets/d/{sheetID}")
 
 @bot.command()
 @commands.is_owner()
@@ -320,27 +395,28 @@ async def applyResults(ctx):
     if period !='results':
         await ctx.send(f"Error! Current period is {period}!")
         return
+    # set backup
+    SeasonInfo.updateSeasonInfoBackupDB(seasonInfoDB)
     _, contestantScorePairs, statsRows, _ = CalculateResults.generateResults(getSheet=False)
-    print('0')
     statsSheetID = updateAllStats(statsRows)
-    print('0.5')
     oldPrizerIDs = seasonInfoDB['currentPrizers']
+    # note: awardElimsAndPrizes already recalculates elims based on rolling average if applicable
     prizerIDs, elimIDs = CalculateResults.awardElimsAndPrizes(contestantScorePairs)
     print(prizerIDs)
     print(elimIDs)
     server: discord.Guild = bot.get_guild(serverID)
+    oldPrizerMembers = [await server.fetch_member(userID) for userID in oldPrizerIDs]
+    await removeRoleFromList(roleIDs['prize'],oldPrizerMembers)
     prizerMembers = [await server.fetch_member(userID) for userID in prizerIDs]
     print('1')
     await addRoleToList(roleIDs['prize'],prizerMembers)
-    oldPrizerMembers = [await server.fetch_member(userID) for userID in oldPrizerIDs]
-    await removeRoleFromList(roleIDs['prize'],oldPrizerMembers)
     elimMembers = [await server.fetch_member(userID) for userID in elimIDs]
     await removeRoleFromList(roleIDs['alive'],elimMembers)
     await addRoleToList(roleIDs['eliminated'],elimMembers)
     prizerNames = SeasonInfo.getDisplayNamesFromIDs(prizerIDs,True)
     elimNames = SeasonInfo.getDisplayNamesFromIDs(elimIDs,False)
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-    print('2')
+    print('Incrementing current round')
     with updateDBLock:
         seasonInfoDB['period'] = 'preResponding'
         seasonInfoDB['currentRound'] += 1
@@ -349,20 +425,58 @@ async def applyResults(ctx):
     await channel.send(f"Results have been applied!")
     if len(seasonInfoDB['aliveContestants'])!=1:
         await channel.send(sopL(f"{lts(prizerNames)} {{has/have}} earned a prize."))
-        await channel.send(sopL(f"{lts(elimNames)} {{has/have}} been eliminated."))
+        if len(elimNames)!=0:
+            await channel.send(sopL(f"{lts(elimNames)} {{has/have}} been eliminated."))
+        else:
+            await channel.send("This round has no eliminations.")
     else:
         seasonName = seasonInfoDB['seasonName']
         await channel.send(sopL(f"{lts(prizerNames)} is the winner of {seasonName}! Hooray!"))
+        print("Ending season")
         with updateDBLock:
             seasonInfoDB['period'] = 'over'
             SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
+    await ctx.send("Success! Results have been applied!")
 
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def undoResults(ctx):
+    await ctx.send('Are you SURE you want to UNDO results? Reply "yes" within 10 seconds if so.')
+    reply = await getConfirmationMessage(ctx)
+    if not reply or reply.lower() != "yes":
+        await ctx.send("Results will not be applied.")
+        return
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    if period !='preResponding':
+        await ctx.send(f"Error! Current period is {period}!")
+        return
+    # load backup
+    seasonInfoBackupDB = SeasonInfo.getSeasonInfoBackupDB()
+    prizerIDsToUndo = seasonInfoDB['currentPrizers']
+    prizerIDsToRestore = seasonInfoBackupDB['currentPrizers']
+    elimIDsToUndo = set(seasonInfoDB['eliminatedContestants']).intersection(set(seasonInfoBackupDB['aliveContestants']))
+    server: discord.Guild = bot.get_guild(serverID)
+    prizerMembersToUndo = [await server.fetch_member(userID) for userID in prizerIDsToUndo]
+    await removeRoleFromList(roleIDs['prize'],prizerMembersToUndo)
+    prizerMembersToRestore = [await server.fetch_member(userID) for userID in prizerIDsToRestore]
+    await addRoleToList(roleIDs['prize'],prizerMembersToRestore)
+    elimMembersToUndo = [await server.fetch_member(userID) for userID in elimIDsToUndo]
+    await removeRoleFromList(roleIDs['eliminated'],elimMembersToUndo)
+    await addRoleToList(roleIDs['alive'],elimMembersToUndo)
+    statsSheetID = removeMostRecentRoundFromAllStats()
+    channel = bot.get_channel(channelIDs['results'])
+    await channel.send(f"Results have been undone.")
+    await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
+    await ctx.send("Success! Results have been undone!")
 
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
 async def updateDisplayNames(ctx):
+    print("Updating display names")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         for userID in seasonInfoDB['aliveContestants']:
@@ -373,6 +487,7 @@ async def updateDisplayNames(ctx):
 @bot.command()
 @commands.dm_only()
 async def respond(ctx,*,response):
+    print("Recording a response")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if seasonInfoDB['period']!='responding':
@@ -387,13 +502,15 @@ async def respond(ctx,*,response):
         # if not, add them to the pool if it's r1, but reject their response if it's after r1
         dbNeedsUpdating = False
         if userID not in aliveContestants:
-            if currentRound != 1:
+            if currentRound != 1 and not (seasonInfoDB['elimFormat']=='rollingAverage' and currentRound==2):
                 await ctx.send('Error! You are not currently a contestant!')
                 return
             else:
                 user = await bot.fetch_user(int(userID))
-                seasonInfoDB['aliveContestants'][userID] = {}
-                seasonInfoDB['aliveContestants'][userID]['displayName'] = user.display_name
+                currentContestantDB = seasonInfoDB['aliveContestants'][userID] = {}
+                currentContestantDB['displayName'] = user.display_name
+                if seasonInfoDB['elimFormat']=='rollingAverage':
+                    currentContestantDB['prevScore'] = 0
                 dbNeedsUpdating = True
         botMessage = RespondingPeriod.addResponse(userID,response,messageID)
         await ctx.send(botMessage)
@@ -412,37 +529,39 @@ async def respond(ctx,*,response):
 @bot.command()
 @commands.dm_only()
 async def edit(ctx,*,newResponse):
-    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-    if seasonInfoDB['period']!='responding':
-        await ctx.send('Error! Responding is not currently open!')
-        return
-    aliveContestants = seasonInfoDB['aliveContestants']
-    userID = str(ctx.message.author.id)
-    messageID = str(ctx.message.id)
-    # check if the user is alive
-    # if not, reject their edit
-    if userID not in aliveContestants:
-        await ctx.send('Error! You are not an alive contestant!')
-        return
-    # check if they included a number for which response to edit
-    splitAtFirstSpace = newResponse.split(' ',1)
-    if splitAtFirstSpace[0].isnumeric():
-        number = int(splitAtFirstSpace[0])
-        newResponse = splitAtFirstSpace[1]
-    else:
-        number = 1
-    botMessage = RespondingPeriod.editResponse(userID,number,newResponse,messageID)
-    await ctx.send(botMessage)
-    print(ctx.message.id)
-    if botMessage[0]=='S':
-        channel = bot.get_channel(channelIDs['log'])
-        user = await bot.fetch_user(int(userID))
-        username = user.name
-        await channel.send(f'{username} has edited their response: `{newResponse}`')
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+        if seasonInfoDB['period']!='responding':
+            await ctx.send('Error! Responding is not currently open!')
+            return
+        aliveContestants = seasonInfoDB['aliveContestants']
+        userID = str(ctx.message.author.id)
+        messageID = str(ctx.message.id)
+        # check if the user is alive
+        # if not, reject their edit
+        if userID not in aliveContestants:
+            await ctx.send('Error! You are not an alive contestant!')
+            return
+        # check if they included a number for which response to edit
+        splitAtFirstSpace = newResponse.split(' ',1)
+        if splitAtFirstSpace[0].isnumeric():
+            number = int(splitAtFirstSpace[0])
+            newResponse = splitAtFirstSpace[1]
+        else:
+            number = 1
+        botMessage = RespondingPeriod.editResponse(userID,number,newResponse,messageID)
+        await ctx.send(botMessage)
+        print(ctx.message.id)
+        if botMessage[0]=='S':
+            channel = bot.get_channel(channelIDs['log'])
+            user = await bot.fetch_user(int(userID))
+            username = user.name
+            await channel.send(f'{username} has edited their response: `{newResponse}`')
 
 @bot.command()
 @commands.dm_only()
 async def setbook(ctx):
+    print("Recording a book")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         userID = str(ctx.message.author.id)
@@ -477,7 +596,6 @@ async def responseError(ctx,error):
         print(error)
         await ctx.send("Something is wrong. Please report this to SergeantSnivy.")
 
-# TODO: add case insensitivity for small screens
 @bot.command()
 @commands.dm_only()
 async def vote(ctx,keyword,letters):

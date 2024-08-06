@@ -4,7 +4,7 @@ from datetime import datetime
 from Misc import singularOrPluralFromList as sopL
 from Misc import listToString as lts
 from Misc import addDays, addMinutes
-from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
 import json
 import threading
 import re

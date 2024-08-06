@@ -10,7 +10,8 @@ from statistics import pstdev
 from scipy.stats import skew
 from VotingPeriod import getScreensDB, getVotesDB
 from RespondingPeriod import getResponseDB, userKeysToMessageKeys
-from SeasonInfo import getSeasonInfoDB
+from SeasonInfo import getSeasonInfoDB, getSeasonName
+from Stats import getSRPairsFromContestantScorePairs
 from Misc import sheetsRowArray
 import SeasonInfo
 
@@ -18,9 +19,6 @@ updateDBLock = threading.Lock()
 
 def getCurrentRound():
     return getSeasonInfoDB()['currentRound']
-
-def getSeasonName():
-    return getSeasonInfoDB()['seasonName']
 
 def getScoresFileName():
     return f'{getSeasonName()}R{str(getCurrentRound())}Scores.json'
@@ -44,6 +42,10 @@ def eliminatedContestants(threshold,leaderboard):
     numEliminated = nonBankerRound(max(1,threshold*numContestants))
     print(numEliminated)
     return leaderboard[numContestants-numEliminated:numContestants]
+
+
+
+
 
 def createScoresDB():
     scoresDB = userKeysToMessageKeys(getResponseDB())
@@ -143,7 +145,38 @@ def getSortedLeaderboards():
         row2 = (None,None,response,score,skew,None)
         formattedLB.append(row1)
         formattedLB.append(row2)
+    # formattedLB / statsRows uses display name, contestantScorePairs uses user ID
     return formattedLB,contestantScorePairs,statsRows
+
+def getPhaseLeaderboard(currentRoundPairs):
+    currentRoundSRPairs = getSRPairsFromContestantScorePairs(currentRoundPairs)
+    totalSRPairs = []
+    formattedLB = []
+    currentRound = getCurrentRound()
+    headers = ("Rank","Book","Contestant","Total",f"Round {str(currentRound-1)}",f"Round {str(currentRound)}")
+    formattedLB.append(headers)
+    aliveContestants = getSeasonInfoDB()['aliveContestants']
+    for userID,currentSR in currentRoundSRPairs:
+        userData = aliveContestants[userID]
+        if 'bookLink' in userData:
+            book = f'=image("{userData['bookLink']}")'
+        else:
+            book = '=image("https://files.catbox.moe/q6k2t9.png")'
+        prevSR = userData['prevScore']
+        displayName = userData['displayName']
+        totalSR = prevSR+currentSR
+        formattedLB.append([None,book,displayName,totalSR,prevSR,currentSR])
+        totalSRPairs.append((userID,totalSR))
+    totalSRPairs.sort(key=lambda x: x[1],reverse=True)
+    totalSRIndex = headers.index("Total")
+    print('\n')
+    print(totalSRIndex)
+    print(formattedLB)
+    formattedLB = [formattedLB[0]] + sorted(formattedLB[1:],key=lambda x: x[totalSRIndex],reverse=True)
+    # add ranks after sort
+    for i,row in enumerate(formattedLB):
+        row = ["#"+str(i+1)] + list(row[1:])
+    return formattedLB,totalSRPairs,currentRoundSRPairs
 
 def fill_excel_sheet(file_path,leaderboard):
     with pd.ExcelWriter(file_path, engine='xlsxwriter') as writer:
@@ -154,9 +187,9 @@ def fill_excel_sheet(file_path,leaderboard):
 
 # imports data from Excel sheet into a Google Sheet
 # the Google Sheet will be formatted based on a results template
-def create_google_sheet(leaderboard):
+def create_google_sheet(leaderboard,templateID):
     client = gspread.authorize(priv.creds)
-    rV = client.copy(priv.results_template_id,title="Testing")
+    rV = client.copy(templateID,title="Testing")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
@@ -172,25 +205,23 @@ def generateResults(getSheet=True):
     createScoresDB()
     formattedLB, contestantScorePairs, statsRows = getSortedLeaderboards()
     if getSheet:
-        sheetID = create_google_sheet(formattedLB)
+        sheetID = create_google_sheet(formattedLB,priv.results_template_id)
         print(sheetID)
     else:
         sheetID = None
     return formattedLB, contestantScorePairs, statsRows, sheetID
 
+def generatePhaseResults(contestantScorePairs,getSheet=True):
+    formattedLB, totalSRPairs, currentRoundSRPairs = getPhaseLeaderboard(contestantScorePairs)
+    if getSheet:
+        sheetID = create_google_sheet(formattedLB,priv.phase_results_template_id)
+        print(sheetID)
+    else:
+        sheetID = None
+    return formattedLB, totalSRPairs, currentRoundSRPairs, sheetID
+
 def awardElimsAndPrizes(contestantScorePairs):
     seasonInfoDB = getSeasonInfoDB()
-    if seasonInfoDB['elimFormat']=='vanilla':
-        elims = eliminatedContestants(0.3,contestantScorePairs)
-    elimIDs = []
-    for pair in elims:
-        print(pair)
-        userID = pair[0]
-        print(userID)
-        print(type(userID))
-        elimIDs.append(userID)
-        seasonInfoDB['eliminatedContestants'][userID] = seasonInfoDB['aliveContestants'][userID]
-        del seasonInfoDB['aliveContestants'][userID]
     prizers = prizingContestants(0.2,contestantScorePairs)
     prizerIDs = []
     seasonInfoDB['currentPrizers'] = []
@@ -199,6 +230,28 @@ def awardElimsAndPrizes(contestantScorePairs):
         userID = pair[0]
         seasonInfoDB['currentPrizers'].append(userID)
         prizerIDs.append(userID)
+    nonElim = False
+    # if rolling average, write current scores to prevScore in seasonInfoDB, then get rolling average for elims
+    if seasonInfoDB['elimFormat'] == 'rollingAverage':
+        _, potentialNewPairs, currentRoundSRPairs, _ = generatePhaseResults(contestantScorePairs,getSheet=False)
+        for userID, currentScore in currentRoundSRPairs:
+                seasonInfoDB['aliveContestants'][userID]['prevScore'] = currentScore
+        if seasonInfoDB['currentRound']!=1:
+            contestantScorePairs = potentialNewPairs
+        else:
+            nonElim = True
+    # eliminate people if there's eliminations
+    elimIDs = []
+    if not nonElim:
+        elims = eliminatedContestants(0.3,contestantScorePairs)
+        for pair in elims:
+            print(pair)
+            userID = pair[0]
+            print(userID)
+            print(type(userID))
+            elimIDs.append(userID)
+            seasonInfoDB['eliminatedContestants'][userID] = seasonInfoDB['aliveContestants'][userID]
+            del seasonInfoDB['aliveContestants'][userID]
     print(seasonInfoDB)
     print("Prizer IDs:")
     print(prizerIDs)
