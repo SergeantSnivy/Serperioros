@@ -122,7 +122,7 @@ def getSortedLeaderboards():
         contestant = userData['displayName']
         response = dataDict['content']
         # sanitize potential formulas
-        if response[0] in ['=','+']:
+        if response[0] in ['=','+',"'"]:
             response = "'" + response
         score = dataDict['finalScore']
         stdev = dataDict['stdev']
@@ -145,11 +145,18 @@ def getSortedLeaderboards():
         row2 = (None,None,response,score,skew,None)
         formattedLB.append(row1)
         formattedLB.append(row2)
+    # add DNPs to contestantScorePairs and statsRows if not vanilla (necessary for them to be in SRs)
+    if seasonInfoDB['elimFormat'] != 'vanilla':
+        for DNP in seasonInfoDB['currentDNPs']:
+            contestantScorePairs.append((DNP,-1))
+            displayName = getSeasonInfoDB()['aliveContestants'][DNP]['displayName']
+            statsRows.append((displayName,'DNP',-1,0,0))
     # formattedLB / statsRows uses display name, contestantScorePairs uses user ID
     return formattedLB,contestantScorePairs,statsRows
 
 def getPhaseLeaderboard(currentRoundPairs):
     currentRoundSRPairs = getSRPairsFromContestantScorePairs(currentRoundPairs)
+    print(currentRoundSRPairs)
     totalSRPairs = []
     formattedLB = []
     currentRound = getCurrentRound()
@@ -185,7 +192,7 @@ def fill_excel_sheet(file_path,leaderboard):
         currentDF.to_excel(writer,sheet_name=f'Results',index=False,
                             header=None)
 
-# imports data from Excel sheet into a Google Sheet
+# imports data from 2d array into a Google Sheet
 # the Google Sheet will be formatted based on a results template
 def create_google_sheet(leaderboard,templateID):
     client = gspread.authorize(priv.creds)
@@ -235,8 +242,9 @@ def awardElimsAndPrizes(contestantScorePairs):
     if seasonInfoDB['elimFormat'] == 'rollingAverage':
         _, potentialNewPairs, currentRoundSRPairs, _ = generatePhaseResults(contestantScorePairs,getSheet=False)
         for userID, currentScore in currentRoundSRPairs:
-                seasonInfoDB['aliveContestants'][userID]['prevScore'] = currentScore
+            seasonInfoDB['aliveContestants'][userID]['prevScore'] = currentScore
         if seasonInfoDB['currentRound']!=1:
+            oldPairs = contestantScorePairs
             contestantScorePairs = potentialNewPairs
         else:
             nonElim = True
@@ -255,6 +263,17 @@ def awardElimsAndPrizes(contestantScorePairs):
     print(seasonInfoDB)
     print("Prizer IDs:")
     print(prizerIDs)
+    # recalculate previous SRs without eliminated contestants if that is enabled
+    if seasonInfoDB['elimFormat'] == 'rollingAverage' and seasonInfoDB['currentRound'] != 1 and seasonInfoDB['recalcPrev']:
+        onlyAlivePairs = []
+        print(oldPairs)
+        for pair in oldPairs:
+            if pair[0] in seasonInfoDB['aliveContestants']:
+                onlyAlivePairs.append(pair)
+        print(onlyAlivePairs)
+        recalcedSRs = getSRPairsFromContestantScorePairs(onlyAlivePairs)
+        for userID,newSR in recalcedSRs:
+            seasonInfoDB['aliveContestants'][userID]['prevScore'] = newSR
     SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     return prizerIDs, elimIDs
     

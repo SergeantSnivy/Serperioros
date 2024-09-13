@@ -5,3 +5,4 @@
 PrivateStuff.py
 PrivateStuff.cpython-312.pyc
 __pycache__
+*.txt

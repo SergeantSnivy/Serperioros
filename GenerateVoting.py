@@ -2,6 +2,7 @@ import gspread
 from gspread_formatting import *
 from gspread.utils import ValueInputOption, rowcol_to_a1
 from googleapiclient.discovery import build
+from urllib.parse import quote
 from random import shuffle
 import math
 from copy import deepcopy
@@ -25,55 +26,47 @@ responseCells = (CellFormat(backgroundColorStyle=responseColors[0],textFormat=re
 
 def surroundRangeWithBorders(formatGrid:list[list[CellFormat]],topLeftRow:int,topLeftCol:int,width:int,height:int):
     # create border object for every cell
-    print(len(formatGrid))
-    print(len(formatGrid[0]))
-    print(topLeftRow)
-    print(topLeftCol)
-    print(width)
-    print(height)
     for i in range(width):
         for j in range(height):
-            print(j)
             formatGrid[topLeftRow+j][topLeftCol+i].borders = Borders()
-            print(formatGrid[topLeftRow+j][topLeftCol+i])
     # add top/bottom borders
-    print('\n')
     for i in range(width):
-        print(formatGrid[topLeftRow][topLeftCol+i])
-        print(formatGrid[topLeftRow+height-1][topLeftCol+i])
         formatGrid[topLeftRow][topLeftCol+i].borders.top=thickBlackBorder
-        print(formatGrid[topLeftRow][topLeftCol+i])
-        print(formatGrid[topLeftRow+height-1][topLeftCol+i])
         formatGrid[topLeftRow+height-1][topLeftCol+i].borders.bottom=thickBlackBorder
-        print(formatGrid[topLeftRow][topLeftCol+i])
-        print(formatGrid[topLeftRow+height-1][topLeftCol+i])
-        print('\n')
     # add left/right borders
     for j in range(height):
-        print(formatGrid[topLeftRow+j][topLeftCol])
-        print(formatGrid[topLeftRow+j][topLeftCol+width-1])
         formatGrid[topLeftRow+j][topLeftCol].borders.left=thickBlackBorder
-        print(formatGrid[topLeftRow+j][topLeftCol])
-        print(formatGrid[topLeftRow+j][topLeftCol+width-1])
         formatGrid[topLeftRow+j][topLeftCol+width-1].borders.right=thickBlackBorder
-        print(formatGrid[topLeftRow+j][topLeftCol])
-        print(formatGrid[topLeftRow+j][topLeftCol+width-1])
-        print('\n')
-    print('\n')
 
 # gets all Unicode characters that will be used as keyletters
 def getUniTable(numResponses):
     uniTable = []
-    uniRanges = [(65,91),(97,123),(48,61),(62,65)]
+    # in order: upper letters, lower letters, digits, then other latin letters
+    uniRanges = [(65,91),(97,123),(48,58)]
     for r in uniRanges:
         for i in range(r[0],r[1]):
             uniTable.append(chr(i))
             if len(uniTable)>=numResponses:
                 return uniTable
     numLeft = numResponses-len(uniTable)
-    for i in range(161,161+numLeft):
+    for i in range(192,192+numLeft):
         uniTable.append(chr(i))
     return uniTable
+
+def screenToVotelink(keyword,prompt,screen):
+    urlStart = "https://voter.figgyc.uk/#votelink3="
+    urlRest = ""
+    urlRest += f"{keyword}\t{prompt}\t"
+    for letter,response in screen:
+        # undo sanitization if it occurred
+        if response[:2] in ("'+","'=","''"):
+            print("Changing "+response)
+            response = response[1:]
+        print(response)
+        urlRest += f"{letter}\t{response}\n"
+    # get rid of extra newline
+    urlRest = urlRest[:-1]
+    return urlStart+quote(urlRest,safe='')
 
 
 # generates a voting section based on a provided number of screens
@@ -101,13 +94,20 @@ def generate_section(responses,numScreens,sectionNum):
         topRowOfPairs = currentRow
         numLetters = len(splits[j])
         for k,ID in enumerate(splits[j],start=0):
-            keyResponsePairs.append((uniTable[k],responses[ID]['content']))
+            response = responses[ID]['content']
+            # sanitize formulas
+            if response[0] in ['=','+',"'"]:
+                response = "'" + response
+            keyResponsePairs.append((uniTable[k],response))
             formatGrid.append((deepcopy(keyletterCell),deepcopy(responseCells[currentRow%2])))
             responsesOnScreen[keyword][uniTable[k]] = ID
             currentRow += 1
         # add borders
         surroundRangeWithBorders(formatGrid,topRowOfPairs,0,1,numLetters)
         surroundRangeWithBorders(formatGrid,topRowOfPairs,1,1,numLetters)
+        # add votelink
+        keyResponsePairs[topRowOfPairs-1] = (None,f'''=HYPERLINK("{
+            screenToVotelink(keyword,prompt,keyResponsePairs[topRowOfPairs:currentRow])}","{keyword}")''')
         if j<len(splits)-1:
             keyResponsePairs.append((None,None))
             formatGrid.append((None,None))
@@ -123,7 +123,7 @@ def generate_section(responses,numScreens,sectionNum):
             currentDF.to_excel(writer,sheet_name=f'Section {str(n+1)}',index=False,
                                header=None,engine_kwargs={'options': {'strings_to_formulas': True}})'''
 
-# imports data from Excel sheet into a Google Sheet
+# imports data from 2d array into a Google Sheet
 # the Google Sheet will be formatted based on a voting template
 def create_google_sheet(sections):
     client = gspread.authorize(priv.creds)
@@ -139,7 +139,7 @@ def create_google_sheet(sections):
             worksheet.resize(rows=len(currentSecValues), cols=len(currentSecValues[0]))
         except:
             worksheet = rV.add_worksheet(title=f"Section {str(n)}", rows=len(currentSecValues), cols=len(currentSecValues[0]))
-        worksheet.update(currentSecValues)
+        worksheet.update(currentSecValues,value_input_option=ValueInputOption.user_entered)
         # create cellname/cellformat pairs
         nameFormatPairs = []
         for row in range(len(currentFormatGrid)):

@@ -20,8 +20,9 @@ updateDBLock = threading.Lock()
 
 channelIDs = {'prompts':1249849815886725130,'technicals':1249849864729395241,
               'voting':1249849883569946655,'results':1249849942928003164,
-              'log':1249886965046706206}
-roleIDs = {'prize':1263736029131706378,'alive':1263724263807127595,'eliminated':1263724948682444861}
+              'log':1249886965046706206,'supervoterTalk':1280703395690451006}
+roleIDs = {'prize':1263736029131706378,'alive':1263724263807127595,'eliminated':1263724948682444861,
+           'supervoter':1280703462631276594,'supervoteReviewer':1280703899803844608}
 serverID = 1204238093062901821
 
 intents = discord.Intents.default() #Defining intents
@@ -43,12 +44,12 @@ async def on_ready():
     except:
         pass
     os.chdir("metaInfo")
-    with open('currentSeasonName.txt','w') as f:
+    with open('currentSeasonName.txt','r') as f:
         seasonName = f.read()
     os.chdir(pathToBot)
+    print(os.getcwd())
     os.chdir(seasonName)
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-    os.chdir(seasonInfoDB['seasonName'])
     period = seasonInfoDB['period']
     deadline = seasonInfoDB['deadline']
     enforceDeadline = seasonInfoDB['enforceDeadline']
@@ -145,7 +146,7 @@ async def setLimit(ctx,num,type):
 @commands.is_owner()
 @commands.dm_only()
 async def setPeriod(ctx,newPeriod):
-    if newPeriod not in ['preResponding','responding','preVoting','voting','results','over']
+    if newPeriod not in ['preResponding','responding','preVoting','voting','results','over']:
         await ctx.send(f"Error! {newPeriod} is not a valid period!")
         return
     currentPeriod = SeasonInfo.getSeasonInfoDB()['period']
@@ -183,7 +184,7 @@ async def setDeadline(ctx,timestamp):
     elif period=='voting':
         channel = bot.get_channel(channelIDs['voting'])
     if channel:
-        botMessage = f"Update: The {period} deadline is now"
+        botMessage = f"Update: The {period} deadline is now "
         if seasonInfoDB['deadlineMode']=='min':
             botMessage += f'<t:{timestamp}:T>, which is <t:{timestamp}:R>!'
         elif seasonInfoDB['deadlineMode']=='day':
@@ -304,41 +305,12 @@ async def startResponding(ctx,*,prompt):
             seasonInfoDB['prompts'].append(prompt)
         else:
             seasonInfoDB['prompts'][currentRound-1]=prompt
+        SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     await doTaskAndSendMessage(RespondingPeriod.startResponding)
     await ctx.send("Success! Responding has started!")
     enforceDeadline = SeasonInfo.getSeasonInfoDB()['enforceDeadline']
     if enforceDeadline:
         await executeDeadline()
-    '''
-    with updateDBLock:
-        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        currentRound = seasonInfoDB['currentRound']
-        RespondingPeriod.createResponseDB()
-        if len(seasonInfoDB['prompts'])<currentRound:
-            seasonInfoDB['prompts'].append(prompt)
-        else:
-            seasonInfoDB['prompts'][currentRound-1]=prompt
-        seasonInfoDB['period'] = 'responding'
-        channel = bot.get_channel(channelIDs['prompts'])
-        botMessage = (f"Round {str(currentRound)} has started! Your prompt is: \n"+
-                        f"```{prompt}```")
-        limitType = {'char':'characters','word':'words'}[seasonInfoDB['limitType']]
-        limit = str(seasonInfoDB['limit'])
-        botMessage += f"Your response must not exceed **{limit} {limitType}**, or it will be rejected."
-        deadline = None
-        if seasonInfoDB['deadlineMode']=='min':
-            deadline = addMinutes(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
-            botMessage += f'\nRespond by <t:{deadline}:T>, which is <t:{deadline}:R>.'
-        elif seasonInfoDB['deadlineMode']=='day':
-            deadline = addDays(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
-            botMessage += f'\nRespond by <t:{deadline}:F>, which is <t:{deadline}:R>.'
-        seasonInfoDB['deadline'] = deadline
-        SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
-        await channel.send(botMessage)
-        await ctx.send(f"Success! Responding period has started!")
-    if deadline and seasonInfoDB['enforceDeadline']:
-        await executeDeadline()
-    '''
 
 @bot.command()
 @commands.is_owner()
@@ -398,8 +370,8 @@ async def applyResults(ctx):
     # set backup
     SeasonInfo.updateSeasonInfoBackupDB(seasonInfoDB)
     _, contestantScorePairs, statsRows, _ = CalculateResults.generateResults(getSheet=False)
-    statsSheetID = updateAllStats(statsRows)
     oldPrizerIDs = seasonInfoDB['currentPrizers']
+    statsSheetID = updateAllStats(statsRows)
     # note: awardElimsAndPrizes already recalculates elims based on rolling average if applicable
     prizerIDs, elimIDs = CalculateResults.awardElimsAndPrizes(contestantScorePairs)
     print(prizerIDs)
@@ -455,6 +427,7 @@ async def undoResults(ctx):
         return
     # load backup
     seasonInfoBackupDB = SeasonInfo.getSeasonInfoBackupDB()
+
     prizerIDsToUndo = seasonInfoDB['currentPrizers']
     prizerIDsToRestore = seasonInfoBackupDB['currentPrizers']
     elimIDsToUndo = set(seasonInfoDB['eliminatedContestants']).intersection(set(seasonInfoBackupDB['aliveContestants']))
@@ -466,10 +439,14 @@ async def undoResults(ctx):
     elimMembersToUndo = [await server.fetch_member(userID) for userID in elimIDsToUndo]
     await removeRoleFromList(roleIDs['eliminated'],elimMembersToUndo)
     await addRoleToList(roleIDs['alive'],elimMembersToUndo)
+    # overwrite DB with backup
+    with updateDBLock:
+        SeasonInfo.updateSeasonInfoDB(seasonInfoBackupDB)
+    # undo stats
     statsSheetID = removeMostRecentRoundFromAllStats()
     channel = bot.get_channel(channelIDs['results'])
     await channel.send(f"Results have been undone.")
-    await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
+    #await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
     await ctx.send("Success! Results have been undone!")
 
 @bot.command()
@@ -558,7 +535,7 @@ async def edit(ctx,*,newResponse):
             username = user.name
             await channel.send(f'{username} has edited their response: `{newResponse}`')
 
-@bot.command()
+@bot.command(aliases=['book'])
 @commands.dm_only()
 async def setbook(ctx):
     print("Recording a book")

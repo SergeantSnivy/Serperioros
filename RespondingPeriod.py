@@ -65,7 +65,6 @@ def maxResponses(contestant):
         return getResponsesPerPerson()+1
     return getResponsesPerPerson()
 
-# TODO: sanitize sheets formula characters (=,+)
 def addResponse(contestant,response:str,messageID):
     if len(response)>1900:
         return f"Failed! Your response has {len(response)} characters, which is too long!"
@@ -137,9 +136,10 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         message += f'response now reads:\n`{newResponse}`'
     return message
 
-async def startResponding():
+def startResponding():
     with updateDBLock:
         seasonInfoDB = getSeasonInfoDB()
+        seasonInfoDB['currentDNPs'] = []
         currentRound = seasonInfoDB['currentRound']
         createResponseDB()
         prompt = seasonInfoDB['prompts'][-1]
@@ -181,9 +181,15 @@ def closeResponding():
             if aliveContestant not in responseDB:
                 DNPs.append(aliveContestant)
         if len(DNPs)!=0:
+            # eliminate DNPs if vanilla; otherwise, add them to a list to give them 0% SR later
             for DNP in DNPs:
-                seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
-                del seasonInfoDB['aliveContestants'][DNP]
+                elimFormat = seasonInfoDB['elimFormat']
+                if elimFormat == 'vanilla':
+                    seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
+                    del seasonInfoDB['aliveContestants'][DNP]
+                # if statement in case of running code multiple times
+                elif DNP not in seasonInfoDB['currentDNPs']:
+                    seasonInfoDB['currentDNPs'].append(DNP)
         updateSeasonInfoDB(seasonInfoDB)
     currentRound = seasonInfoDB['currentRound']
     message = (f"Round {str(currentRound)} responding is now closed!\n"+
@@ -194,9 +200,9 @@ def closeResponding():
         else:
             DNPDisplayNames = []
             for i,userID in enumerate(DNPs):
-                DNPDisplayNames.append(seasonInfoDB['eliminatedContestants'][userID]['displayName'])
+                DNPDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
             message += ("\n"+sopL(f"{lts(DNPDisplayNames)} ") 
-                        +"failed to send responses and will be eliminated. So sad.")
+                        +"failed to send responses. So sad.")
     return (message,'prompts',DNPs)
 
 

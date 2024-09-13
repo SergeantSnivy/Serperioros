@@ -3,9 +3,17 @@ from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
 from statistics import pstdev
 from scipy.stats import norm
 import gspread
+from gspread_formatting import *
 import PrivateStuff as priv
-from gspread.utils import ValueInputOption
+from gspread.utils import ValueInputOption, rowcol_to_a1
 from googleapiclient.discovery import build
+
+percentTextCell = CellFormat(numberFormat=NumberFormat(type="PERCENT",pattern="0.00%"))
+decimalTextCell = CellFormat(numberFormat=NumberFormat(type="NUMBER",pattern="0.00"))
+intTextCell = CellFormat(numberFormat=NumberFormat(type="NUMBER",pattern="0"))
+# ints will display as ints automatically
+
+formatDict = {'float':percentTextCell,'int':intTextCell,'dec':decimalTextCell}
 
 StatsInfo = {'Percentiles': (lambda rows: getPercentilePairs(rows), 'float'),
              'SRs': (lambda rows: getSRPairs(rows), 'float'),
@@ -53,24 +61,32 @@ def createStatsSheets():
 # stats rows format: contestant, response, score, stdev, skew
 
 def getPercentilePairs(statsRows):
-    return [(row[0],row[2]) for row in statsRows]
+    return [(row[0],row[2]) if row[2]!=-1 else (row[0],0) for row in statsRows]
 
 def getSRPairsFromContestantScorePairs(contestantScorePairs):
-    allScores = [pair[1] for pair in contestantScorePairs]
+    DNPs = getSeasonInfoDB()["currentDNPs"]
+    print(contestantScorePairs)
+    allScores = [pair[1] for pair in contestantScorePairs if pair[0] not in DNPs]
     mean = sum(allScores)/len(allScores)
     stdev = pstdev(allScores)
     SRPairs = []
     for userID, currentScore in contestantScorePairs:
-        SRPairs.append((userID,norm.cdf(currentScore,mean,stdev)))
+        if userID not in DNPs:
+            SRPairs.append((userID,norm.cdf(currentScore,mean,stdev)))
+        else:
+            SRPairs.append((userID,0))
     return SRPairs
 
 def getSRPairs(statsRows):
-    allScores = [row[2] for row in statsRows]
+    allScores = [row[2] for row in statsRows if row[2]!=-1]
     mean = sum(allScores)/len(allScores)
     stdev = pstdev(allScores)
     SRPairs = []
     for row in statsRows:
-        SRPairs.append((row[0],norm.cdf(row[2],mean,stdev)))
+        if row[2]!=-1:
+            SRPairs.append((row[0],norm.cdf(row[2],mean,stdev)))
+        else:
+            SRPairs.append((row[0],0))
     return SRPairs
 
 def getStDevPairs(statsRows):
@@ -98,7 +114,7 @@ def updateStatFile(CSVFileName,newPairs,numType):
     print('\n')
     print(CSVFileName)
     statsArray = CSVToArray(CSVFileName)
-    #print(statsArray)
+    print(statsArray)
     contestantsInFile = [row[1] for row in statsArray]
     # add new round to header
     statsArray[0].append("Round "+str(len(statsArray[0][5:])+1))
@@ -123,7 +139,7 @@ def updateStatFile(CSVFileName,newPairs,numType):
         currentRow[iStdev] = pstdev(allValues)
     # add debuts
     for contestant, value in debuts:
-        statsArray.append([0]*len(statsArray)[0])
+        statsArray.append([0]*len(statsArray[0]))
         currentRow = statsArray[-1]
         currentRow[1] = contestant
         currentRow[iTotal] = value
@@ -132,20 +148,24 @@ def updateStatFile(CSVFileName,newPairs,numType):
     #print(statsArray)
     statsArray = [statsArray[0]]+sorted(statsArray[1:],reverse=True,key=lambda x: float(x[2]))
     # redo ranks, convert all values to numbers so it plays nice with sheets
+    formatGrid = [[None]*len(statsArray[0])]
     for i,row in enumerate(statsArray[1:]):
+        formatGrid.append([formatDict["int"]]+[formatDict[numType]]*(len(statsArray[0])-1))
         row[0] = i+1
-        for i in range(2,len(row)):
+        for j in range(2,len(row)):
             # account for non-int average/stdev on a stat where data type is int
-            if i==iAvg or i==iStdev:
-                row[i] = toNum(row[i],"float")
+            if j==iAvg or j==iStdev:
+                row[j] = toNum(row[j],"float")
+                if "Verbosity" in CSVFileName:
+                    formatGrid[i+1][j] = decimalTextCell
             else:
-                row[i] = toNum(row[i],numType)
+                row[j] = toNum(row[j],numType)
     print(statsArray)
     '''if numType == "float":
         for row in statsArray[1:]:
             row[2:] = [toPercent(value) for value in row[2:]]'''
     ArrayToCSV(CSVFileName,statsArray)
-    return statsArray
+    return statsArray, formatGrid
 
 def updateEveryResponseFile(CSVFileName,newRows):
     currentRound = getSeasonInfoDB()['currentRound']
@@ -156,14 +176,17 @@ def updateEveryResponseFile(CSVFileName,newRows):
     everyResponseArray = [everyResponseArray[0]]+sorted(everyResponseArray[1:],reverse=True,key=lambda x: float(x[4]))
     #print(everyResponseArray)
     # redo ranks, convert all values to numbers so it plays nice with sheets
+    formatGrid = [[None]*(len(newRows[0])+2)]
+    print(newRows[0])
     for i,row in enumerate(everyResponseArray[1:]):
-        print(row[0])
+        formatGrid.append([None]*(len(newRows[0])-1)+[percentTextCell,percentTextCell,decimalTextCell])
+        print(formatGrid[i+1])
         row[0] = i+1
         for i in range(4,len(row)):
             row[i] = toNum(row[i],"float")
     print(everyResponseArray)
     ArrayToCSV(CSVFileName,everyResponseArray)
-    return everyResponseArray
+    return everyResponseArray,formatGrid
 
 def createSeasonGoogleSheet():
     client = gspread.authorize(priv.creds)
@@ -179,14 +202,24 @@ def updateGoogleSheet(statsArrays):
     statsSheetID = getSeasonInfoDB()['statsSheetID']
     client = gspread.authorize(priv.creds)
     rV = client.open_by_key(statsSheetID)
-    for n,currentArray in enumerate(statsArrays):
+    for n,(currentArray,currentFormatGrid) in enumerate(statsArrays):
+        print(currentArray)
         try:
             worksheet = rV.get_worksheet(n)
+            print("Got worksheet fine")
+            print(len(currentArray[0]))
             worksheet.resize(rows=len(currentArray), cols=len(currentArray[0]))
+            print("Resized worksheet fine")
         except:
             worksheet = rV.add_worksheet(title=f"Section {str(n)}", rows=len(currentArray), cols=len(currentArray[0]))
         print(currentArray)
         worksheet.update(currentArray,value_input_option=ValueInputOption.user_entered)
+        nameFormatPairs = []
+        for row in range(len(currentFormatGrid)):
+            for col in range(len(currentFormatGrid[0])):
+                if currentFormatGrid[row][col]:
+                    nameFormatPairs.append((rowcol_to_a1(row+1,col+1),currentFormatGrid[row][col]))
+        format_cell_ranges(worksheet,nameFormatPairs)
     return rV.id
 
 def updateAllStats(newRows):
@@ -204,10 +237,10 @@ def updateAllStats(newRows):
     for stat in StatsInfo:
         statFileName = StatsFileName(stat)
         statNewData = StatsInfo[stat][0](onlyCountingRows)
-        statArray = updateStatFile(statFileName,statNewData,StatsInfo[stat][1])
-        allStatsArrays.append(statArray)
-    everyResponseArray = updateEveryResponseFile(StatsFileName('EveryResponse'),newRows)
-    allStatsArrays.append(everyResponseArray)
+        statArray,formatGrid = updateStatFile(statFileName,statNewData,StatsInfo[stat][1])
+        allStatsArrays.append((statArray,formatGrid))
+    everyResponseArray,formatGrid = updateEveryResponseFile(StatsFileName('EveryResponse'),newRows)
+    allStatsArrays.append((everyResponseArray,formatGrid))
     return updateGoogleSheet(allStatsArrays)
 
 def removeMostRecentRoundFromStatFile(CSVFileName):
@@ -217,7 +250,7 @@ def removeMostRecentRoundFromStatFile(CSVFileName):
         if len(row)==firstRowLen:
             statsArray[i] = row[:firstRowLen-1]
     ArrayToCSV(CSVFileName,statsArray)
-    return statsArray
+    return (statsArray,[[None]])
     
 def removeMostRecentRoundFromEveryResponseFile(CSVFileName):
     everyResponseArray = CSVToArray(CSVFileName)
@@ -226,14 +259,19 @@ def removeMostRecentRoundFromEveryResponseFile(CSVFileName):
     i=1
     while i<len(everyResponseArray):
         currentRow = everyResponseArray[i]
-        newEveryResponseArray.append(currentRow)
-        # duplicate entries will be consecutive, so just increment the index by an extra 1 to skip the duplicate
         currentRowRound = int(currentRow[1])
-        if currentRound==currentRowRound:
-            i += 1
+        print(currentRowRound)
+        print(currentRound)
+        print('')
+        if currentRound!=currentRowRound:
+            newEveryResponseArray.append(currentRow)
         i += 1
+    for i,row in enumerate(newEveryResponseArray[1:]):
+        row[0] = i+1
+    print("Thing")
+    print(newEveryResponseArray)
     ArrayToCSV(CSVFileName,newEveryResponseArray)
-    return newEveryResponseArray
+    return (newEveryResponseArray,[[None]])
 
 def removeMostRecentRoundFromAllStats():
     allStatsArrays = []
@@ -243,7 +281,9 @@ def removeMostRecentRoundFromAllStats():
         allStatsArrays.append(statArray)
     everyResponseArray = removeMostRecentRoundFromEveryResponseFile(StatsFileName('EveryResponse'))
     allStatsArrays.append(everyResponseArray)
-    return updateGoogleSheet(allStatsArrays)
+    # return updateGoogleSheet(allStatsArrays)
+    return ""
+    # updating the stats sheet created weird results so I commented it out
 
 
 

@@ -30,9 +30,9 @@ def validJSON(JSON):
 def createSeasonInfoDB(seasonName):
     seasonInfoDB = {'currentRound':1,'seasonName':seasonName,'responsesPerPerson':1,
                     'period':'preResponding','aliveContestants':{},
-                    'eliminatedContestants':{},'currentPrizers':[],
-                    'prompts':[],'numResponses':0,'elimFormat':'rollingAverage','deadline':None,
-                    'deadlineMode':'min','deadlineLen':7,'enforceDeadline':True,
+                    'eliminatedContestants':{},'currentPrizers':[],'currentDNPs':[],
+                    'prompts':[],'numResponses':0,'elimFormat':'rollingAverage','recalcPrev':True,
+                    'deadline':None,'deadlineMode':'min','deadlineLen':7,'enforceDeadline':True,
                     'limitType':'word','limit':10}
     # add season name to meta text file
     os.chdir(pathToBot)
@@ -58,10 +58,10 @@ def getSeasonName():
     return os.getcwd().split('\\')[-1]
 
 def getSeasonInfoFileName():
-    return f'{getSeasonName()}seasonInfo.json'
+    return f'{getSeasonName()}Info.json'
 
 def getSeasonInfoBackupFileName():
-    return f'{getSeasonName()}seasonInfoBackup.json'
+    return f'{getSeasonName()}InfoBackup.json'
 
 def getSeasonInfoDB():
     with open(getSeasonInfoFileName(),'r') as f:
@@ -73,12 +73,12 @@ def updateSeasonInfoDB(newDB):
         json.dump(newDB,f,indent=4)
 
 def getSeasonInfoBackupDB():
-    with open(getSeasonInfoBackupFileName,'r') as f:
+    with open(getSeasonInfoBackupFileName(),'r') as f:
         seasonInfoBackupDB = json.load(f)
     return seasonInfoBackupDB
 
 def updateSeasonInfoBackupDB(newDB):
-    with open(getSeasonInfoBackupFileName,'w') as f:
+    with open(getSeasonInfoBackupFileName(),'w') as f:
         json.dump(newDB,f,indent=4)
 
 def getDisplayNamesFromIDs(IDList,alive):
