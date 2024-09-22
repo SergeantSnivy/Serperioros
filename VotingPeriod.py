@@ -119,6 +119,9 @@ def checkVoteValidity(voteLetters,keysOnScreen):
 
 #TODO: make screen names not case sensitive
 def addVote(userID,keyword,letters):
+    # remove brackets
+    keyword = re.sub("[\[\]]","",keyword)
+    letters = re.sub("[\[\]]","",letters)
     # make sure keyword exists
     allScreens = getScreensDB()
     if keyword not in allScreens:
@@ -134,6 +137,9 @@ def addVote(userID,keyword,letters):
             if keyword not in keywordsPerSectionDB[userCurrentSection]:
                 return (f'Error: You have already started voting on section `{userCurrentSection}`!\n'
                         +f'Screen `{keyword}` is in a different section.')
+            # check if user has access to the supervoter channel; reject their vote if so
+            if votesDB[userID]["supervoterAccess"]:
+                return (f"Error: You are in the Supervoter channel! You cannot change your votes anymore.")
             # check if user has already voted on this screen; if so, change the text at the end
             print(votesDB[userID]['screens'])
             alreadyVotedOnScreen = keyword in votesDB[userID]['screens']
@@ -153,15 +159,23 @@ def addVote(userID,keyword,letters):
                     if keyword in keywordsPerSectionDB[sectionName]:
                         userNewSection = sectionName
                         break
-                votesDB[userID] = {'section':userNewSection,'screens':{}}
+                votesDB[userID] = {'section':userNewSection,'screens':{},'supervoterAccess':False}
             votesDB[userID]['screens'][keyword] = letters
             updateVotesDB(votesDB)
             message=f"Success! Your vote of `{keyword} {letters}` has been logged!"
             if alreadyVotedOnScreen:
                 message=f"Success! Your vote on screen `{keyword}` has been edited to `{letters}`!"
+            # check if they've voted on all screens in the section
+            screensUserHasVotedOn = [screen for screen in votesDB[userID]['screens']]
+            if all([keyword in screensUserHasVotedOn for keyword in keywordsPerSectionDB[userCurrentSection]]):
+                message+=f"\nYou have voted on every screen in section {userCurrentSection}!"
+                message+=f"\nYou can access the supervoter channel with `sp/supervoter`."
     return message
 
 def editVote(userID,keyword,letters):
+    # remove brackets
+    keyword = re.sub("[\[\]]","",keyword)
+    letters = re.sub("[\[\]]","",letters)
     # make sure keyword exists
     allScreens = getScreensDB()
     keyword = keyword.upper()
@@ -175,6 +189,9 @@ def editVote(userID,keyword,letters):
         # make sure user has already voted on this particular screen
         if keyword not in votesDB[userID]['screens']:
             return f'Error! You have not voted on screen {keyword} yet!'
+        # check if user has access to the supervoter channel; reject their edit if so
+        if votesDB[userID]["supervoterAccess"]:
+            return (f"Error: You are in the Supervoter channel! You cannot change your votes anymore.")
         keysOnScreen = [keyletter for keyletter in allScreens[keyword]]
         if len(keysOnScreen)<=26:
             letters = letters.upper()
@@ -199,6 +216,9 @@ def deleteVote(userID,keyword):
         # make sure user has already voted on this particular screen
         if keyword not in votesDB[userID]['screens']:
             return f'Error! You have not voted on screen {keyword} yet!'
+        # check if user has access to the supervoter channel; reject their deletion if so
+        if votesDB[userID]["supervoterAccess"]:
+            return (f"Error: You are in the Supervoter channel! You cannot change your votes anymore.")
         del votesDB[userID]['screens'][keyword] 
         if len(votesDB[userID]['screens']) == 0:
             del votesDB[userID]
@@ -211,9 +231,37 @@ def clearVotes(userID):
         # make sure user has already sent at least one vote 
         if userID not in votesDB:
             return 'Error! You have not sent any votes yet!'
+        # check if user has access to the supervoter channel; reject their deletion if so
+        if votesDB[userID]["supervoterAccess"]:
+            return (f"Error: You are in the Supervoter channel! You cannot change your votes anymore.")
         del votesDB[userID]
         updateVotesDB(votesDB)
         return "Success! All your votes have been deleted!"
+
+def viewVotes(userID):
+    votesDB = getVotesDB()
+    # make sure user has already sent at least one vote
+    if userID not in votesDB:
+        return 'Error! You have not sent any votes yet!'
+    message = "Here is a list of your votes:"
+    userVotes = votesDB[userID]['screens']
+    for keyword in userVotes:
+        message += f'\n`{keyword} {userVotes[keyword]}`'
+    return message
+
+
+def hasSupervoted(userID):
+    votesDB = getVotesDB()
+    keywordsPerSectionDB = getKeywordsPerSectionDB()
+    if userID not in votesDB:
+        return "Error! You have not sent any votes!"
+    userCurrentSection = votesDB[userID]['section']
+    screensUserHasVotedOn = [screen for screen in votesDB[userID]['screens']]
+    if not all([keyword in screensUserHasVotedOn for keyword in keywordsPerSectionDB[userCurrentSection]]):
+        return f"Error! You have not yet voted on every screen in section {userCurrentSection}!"
+    return ""
+        
+
     
 def getVPR():
     numResponses = getSeasonInfoDB()['numResponses']

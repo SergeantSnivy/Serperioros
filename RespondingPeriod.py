@@ -136,6 +136,17 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         message += f'response now reads:\n`{newResponse}`'
     return message
 
+def viewResponses(contestant):
+    responseDB = getResponseDB()
+    # make sure the contestant has sent at least one response
+    if contestant not in responseDB:
+        return "Error! You have not sent any responses!"
+    userResponses = responseDB[contestant]
+    message = "Here's a list of your responses:"
+    for response in userResponses:
+        message += f"\n`{response["content"]}"
+    return message
+
 def startResponding():
     with updateDBLock:
         seasonInfoDB = getSeasonInfoDB()

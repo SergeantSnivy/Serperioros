@@ -22,7 +22,7 @@ channelIDs = {'prompts':1249849815886725130,'technicals':1249849864729395241,
               'voting':1249849883569946655,'results':1249849942928003164,
               'log':1249886965046706206,'supervoterTalk':1280703395690451006}
 roleIDs = {'prize':1263736029131706378,'alive':1263724263807127595,'eliminated':1263724948682444861,
-           'supervoter':1280703462631276594,'supervoteReviewer':1280703899803844608}
+           'supervoter':1280703462631276594,'supervoterReviews':1287186738975997954,'noreminders':1287181190432034886}
 serverID = 1204238093062901821
 
 intents = discord.Intents.default() #Defining intents
@@ -101,11 +101,20 @@ async def addRoleToList(roleID,memberList:list[discord.Member]):
         if role not in member.roles:
             await member.add_roles(role)
 
+async def checkIfUserHasRole(roleID,member:discord.Member):
+    role = await getRole(roleID)
+    return role in member.roles
+
 async def removeRoleFromList(roleID,memberList:list[discord.Member]):
     role = await getRole(roleID)
     for member in memberList:
         if role in member.roles:
             await member.remove_roles(role)
+
+async def removeNoReminders():
+    server: discord.Guild = bot.get_guild(serverID)
+    userList = server.members
+    await removeRoleFromList(roleIDs['noreminders'],userList)
 
 @bot.command()
 @commands.is_owner()
@@ -323,6 +332,7 @@ async def closeResponding(ctx):
         DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
         await removeRoleFromList(roleIDs['alive'],DNPMembers)
         await addRoleToList(roleIDs['eliminated'],DNPMembers)
+    await removeNoReminders()
 
 
 @bot.command()
@@ -341,6 +351,7 @@ async def startVoting(ctx):
 async def closeVoting(ctx):
     await doTaskAndSendMessage(VotingPeriod.closeVoting)
     await ctx.send("Success! Voting is closed!")
+    await removeNoReminders()
     
 
 @bot.command()
@@ -427,7 +438,6 @@ async def undoResults(ctx):
         return
     # load backup
     seasonInfoBackupDB = SeasonInfo.getSeasonInfoBackupDB()
-
     prizerIDsToUndo = seasonInfoDB['currentPrizers']
     prizerIDsToRestore = seasonInfoBackupDB['currentPrizers']
     elimIDsToUndo = set(seasonInfoDB['eliminatedContestants']).intersection(set(seasonInfoBackupDB['aliveContestants']))
@@ -460,6 +470,32 @@ async def updateDisplayNames(ctx):
             user = await bot.fetch_user(int(userID))
             seasonInfoDB['aliveContestants'][userID]['displayName'] = user.display_name
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def forceEliminate(ctx,contestantID):
+    with updateDBLock:
+        seasonInfoDB = SeasonInfo.getSeasonInfoDB
+        if contestantID not in seasonInfoDB['aliveContestants']:
+            await ctx.send("Error! That user is not an alive contestant!")
+            return
+        contestantDict = seasonInfoDB['aliveContestants'][contestantID]
+        del seasonInfoDB['aliveContestants'][contestantID]
+        seasonInfoDB['eliminatedContestants'][contestantID] = contestantDict
+        server: discord.Guild = bot.get_guild(serverID)
+        userMemberInList = [await server.fetch_member(contestantID)]
+        await addRoleToList(roleIDs['eliminated'],userMemberInList)
+        await removeRoleFromList(roleIDs['alive'],contestantID)
+        await ctx.send("Success! That contestant has been eliminated!")
+
+
+@bot.command()
+@commands.dm_only()
+async def respond(ctx,*,response):
+    userID = str(ctx.message.author.id)
+    messageID = str(ctx.message.id)
+    user = await bot.fetch_user(userID)
 
 @bot.command()
 @commands.dm_only()
@@ -502,6 +538,8 @@ async def respond(ctx,*,response):
             user = await bot.fetch_user(int(userID))
             username = user.name
             await channel.send(f'{username} has responded: `{response}`')
+
+async def recordResponse
     
 @bot.command()
 @commands.dm_only()
@@ -534,6 +572,32 @@ async def edit(ctx,*,newResponse):
             user = await bot.fetch_user(int(userID))
             username = user.name
             await channel.send(f'{username} has edited their response: `{newResponse}`')
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def respondFor(ctx,userID,*,response):
+    await respond(ctx=ctx,response=response)
+
+
+
+
+@bot.command()
+@commands.dm_only()
+async def viewresponses(ctx):
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='responding':
+        await ctx.send('Error! Responding is not currently open!')
+        return
+    aliveContestants = seasonInfoDB['aliveContestants']
+    userID = str(ctx.message.author.id)
+    # check if the user is alive
+    if userID not in aliveContestants:
+        await ctx.send('Error! You are not an alive contestant!')
+        return
+    botMessage = RespondingPeriod.viewResponses(userID)
+    await ctx.send(botMessage)
+
 
 @bot.command(aliases=['book'])
 @commands.dm_only()
@@ -591,6 +655,12 @@ async def vote(ctx,keyword,letters):
             await channel.send(f'{username} has edited their vote: `{keyword} {letters}`')
         else:
             await channel.send(f'{username} has sent a vote: `{keyword} {letters}`')
+    # give them the supervoter role if they are now a supervoter
+    if "supervoter" in botMessage:
+        server: discord.Guild = bot.get_guild(serverID)
+        userMemberInList = [await server.fetch_member(userID)]
+        await addRoleToList(roleIDs['supervoter'],userMemberInList)
+
 
 @bot.command()
 @commands.dm_only()
@@ -623,6 +693,10 @@ async def deletevote(ctx,keyword):
         user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has deleted their vote on screen `{keyword}`')
+    # remove the supervoter role if they have it
+    server: discord.Guild = bot.get_guild(serverID)
+    userMemberInList = [await server.fetch_member(userID)]
+    await removeRoleFromList(roleIDs['supervoter'],userMemberInList)
 
 @bot.command()
 @commands.dm_only()
@@ -639,6 +713,99 @@ async def clearvotes(ctx):
         user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has cleared all their votes')
+    # remove the supervoter role if they have it
+    server: discord.Guild = bot.get_guild(serverID)
+    userMemberInList = [await server.fetch_member(userID)]
+    await removeRoleFromList(roleIDs['supervoter'],userMemberInList)
+
+@bot.command()
+@commands.dm_only()
+async def viewvotes(ctx):
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='voting':
+        await ctx.send('Error! Voting is not currently open!')
+        return
+    userID = str(ctx.message.author.id)
+    botMessage = VotingPeriod.viewVotes(userID)
+    await ctx.send(botMessage)
+
+@bot.command()
+@commands.dm_only()
+async def supervoter(ctx):
+    userID = str(ctx.message.author.id)
+    message = VotingPeriod.hasSupervoted(userID)
+    if message:
+        await ctx.send(message)
+        return
+    await ctx.send("Are you SURE you want access to the Supervoter channel? **You will not be able to edit or delete votes afterwards.**\n"+
+                   "Type `yes` within 10 seconds to be given access to the Supervoter channel")
+    reply = await getConfirmationMessage(ctx)
+    if not reply or reply.lower() != "yes":
+        await ctx.send("Interaction cancelled. You were not given access to the Supervoter channel")
+        return
+    server: discord.Guild = bot.get_guild(serverID)
+    userMemberInList = [await server.fetch_member(userID)]
+    await addRoleToList(roleIDs['supervoterReviews'],userMemberInList)
+    with updateDBLock:
+        votesDB = VotingPeriod.getVotesDB()
+        votesDB[userID]['supervoterAccess'] = True
+        VotingPeriod.updateVotesDB(votesDB)
+    await ctx.send("Success! You are now in the Supervoter channel!")
+
+@bot.command()
+@commands.dm_only()
+async def noreminders(ctx):
+    userID = str(ctx.message.author.id)
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    giveWarning = False
+    server: discord.Guild = bot.get_guild(serverID)
+    userMember = await server.fetch_member(userID)
+    if checkIfUserHasRole(roleIDs['noreminders'],userMember):
+        await ctx.send("Error! You already have the No Reminders role! To remove it, use `sp/reminders`.")
+        return
+    if period=='responding':
+        responseDB = RespondingPeriod.getResponseDB()
+        # if they're not a contestant, they don't get responding reminders anyways
+        if userID not in responseDB:
+            await ctx.send("Error! You are not currently an alive contestant!")
+            return
+        # give a warning if they haven't sent all their responses
+        maxResponses = RespondingPeriod.maxResponses(userID)
+        if len(responseDB[userID])<maxResponses:
+            giveWarning = True
+    elif period not in ['voting']:
+        await ctx.send("Error! This isn't a period where you can get reminders!")
+        return
+    # warn them if they haven't sent everything they can send
+    if giveWarning:
+        await ctx.send("Are you SURE you want the No Reminders role? **You have not yet sent all your allotted responses.**\n"+
+                   "Type `yes` within 10 seconds to be given the No Reminders role.")
+        reply = await getConfirmationMessage(ctx)
+        if not reply or reply.lower() != "yes":
+            await ctx.send("Interaction cancelled. You will still receive reminders.")
+            return
+    userMemberInList = [userMember]
+    await addRoleToList(roleIDs['noreminders'],userMemberInList)
+    await ctx.send("Success! You are no longer receiving reminders for this period.")
+
+@bot.command()
+@commands.dm_only()
+async def reminders(ctx):
+    userID = str(ctx.message.author.id)
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    period = seasonInfoDB['period']
+    server: discord.Guild = bot.get_guild(serverID)
+    userMember = await server.fetch_member(userID)
+    if not checkIfUserHasRole(roleIDs['noreminders'],userMember):
+        await ctx.send("Error! You are already receiving reminders! To opt out of reminders, use `sp/noreminders`.")
+        return
+    if period not in ['responding','voting']:
+        await ctx.send("Error! This isn't a period where you can get reminders!")
+        return
+    userMemberInList = [userMember]
+    await removeRoleFromList(roleIDs['noreminders'],userMemberInList)
+    await ctx.send("Success! You will receive reminders for this period again.")
 
 @vote.error
 @editvote.error
