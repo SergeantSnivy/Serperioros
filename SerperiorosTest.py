@@ -116,6 +116,16 @@ async def removeNoReminders():
     userList = server.members
     await removeRoleFromList(roleIDs['noreminders'],userList)
 
+async def removeSupervoter():
+    server: discord.Guild = bot.get_guild(serverID)
+    userList = server.members
+    await removeRoleFromList(roleIDs['supervoter'],userList)
+
+async def removeSupervoterReviews():
+    server: discord.Guild = bot.get_guild(serverID)
+    userList = server.members
+    await removeRoleFromList(roleIDs['supervoterReviews'],userList)
+
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
@@ -351,7 +361,6 @@ async def startVoting(ctx):
 async def closeVoting(ctx):
     await doTaskAndSendMessage(VotingPeriod.closeVoting)
     await ctx.send("Success! Voting is closed!")
-    await removeNoReminders()
     
 
 @bot.command()
@@ -421,6 +430,9 @@ async def applyResults(ctx):
             SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
     await ctx.send("Success! Results have been applied!")
+    await removeNoReminders()
+    await removeSupervoter()
+    await removeSupervoterReviews()
 
 @bot.command()
 @commands.is_owner()
@@ -496,28 +508,27 @@ async def respond(ctx,*,response):
     userID = str(ctx.message.author.id)
     messageID = str(ctx.message.id)
     user = await bot.fetch_user(userID)
+    await recordResponse(userID,messageID,user,response)
 
-@bot.command()
-@commands.dm_only()
-async def respond(ctx,*,response):
+async def recordResponse(userID,messageID,user,response):
     print("Recording a response")
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if seasonInfoDB['period']!='responding':
-            await ctx.send('Error! Responding is not currently open!')
-            return
+            message = 'Error! Responding is not currently open!'
+            await user.send(message)
+            return message
         currentRound = seasonInfoDB['currentRound']
         aliveContestants = seasonInfoDB['aliveContestants']
-        userID = str(ctx.message.author.id)
-        messageID = str(ctx.message.id)
         print('ok')
         # check if the user is alive
         # if not, add them to the pool if it's r1, but reject their response if it's after r1
         dbNeedsUpdating = False
         if userID not in aliveContestants:
             if currentRound != 1 and not (seasonInfoDB['elimFormat']=='rollingAverage' and currentRound==2):
-                await ctx.send('Error! You are not currently a contestant!')
-                return
+                message = 'Error! You are not currently a contestant!'
+                await user.send(message)
+                return message
             else:
                 user = await bot.fetch_user(int(userID))
                 currentContestantDB = seasonInfoDB['aliveContestants'][userID] = {}
@@ -526,8 +537,7 @@ async def respond(ctx,*,response):
                     currentContestantDB['prevScore'] = 0
                 dbNeedsUpdating = True
         botMessage = RespondingPeriod.addResponse(userID,response,messageID)
-        await ctx.send(botMessage)
-        print(ctx.message.id)
+        await user.send(botMessage)
         if botMessage[0]=='S':
             if dbNeedsUpdating:
                 server: discord.Guild = bot.get_guild(serverID)
@@ -535,28 +545,32 @@ async def respond(ctx,*,response):
                 await member.add_roles(await getRole(roleIDs['alive']))
                 SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
             channel = bot.get_channel(channelIDs['log'])
-            user = await bot.fetch_user(int(userID))
             username = user.name
             await channel.send(f'{username} has responded: `{response}`')
+        return botMessage
 
-async def recordResponse
-    
-@bot.command()
+@bot.command(aliases=["editresponse"])
 @commands.dm_only()
 async def edit(ctx,*,newResponse):
+    userID = str(ctx.message.author.id)
+    messageID = str(ctx.message.id)
+    user = await bot.fetch_user(userID)
+    await recordResponseEdit(userID,messageID,user,newResponse)
+    
+async def recordResponseEdit(userID,messageID,user,newResponse):
     with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if seasonInfoDB['period']!='responding':
-            await ctx.send('Error! Responding is not currently open!')
-            return
+            message = 'Error! Responding is not currently open!'
+            await user.send(message)
+            return message
         aliveContestants = seasonInfoDB['aliveContestants']
-        userID = str(ctx.message.author.id)
-        messageID = str(ctx.message.id)
         # check if the user is alive
         # if not, reject their edit
         if userID not in aliveContestants:
-            await ctx.send('Error! You are not an alive contestant!')
-            return
+            message = 'Error! You are not an alive contestant!'
+            await user.send(message)
+            return message
         # check if they included a number for which response to edit
         splitAtFirstSpace = newResponse.split(' ',1)
         if splitAtFirstSpace[0].isnumeric():
@@ -565,21 +579,33 @@ async def edit(ctx,*,newResponse):
         else:
             number = 1
         botMessage = RespondingPeriod.editResponse(userID,number,newResponse,messageID)
-        await ctx.send(botMessage)
-        print(ctx.message.id)
+        await user.send(botMessage)
         if botMessage[0]=='S':
             channel = bot.get_channel(channelIDs['log'])
             user = await bot.fetch_user(int(userID))
             username = user.name
             await channel.send(f'{username} has edited their response: `{newResponse}`')
+        return botMessage
 
 @bot.command()
 @commands.is_owner()
 @commands.dm_only()
 async def respondFor(ctx,userID,*,response):
-    await respond(ctx=ctx,response=response)
+    messageID = str(ctx.message.id)
+    user = await bot.fetch_user(userID)
+    botMessage = await recordResponse(userID,messageID,user,response)
+    username = user.name
+    await ctx.send(f"Attempted to add response for {username}. Message returned:\n```{botMessage}```")
 
-
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def editFor(ctx,userID,*,newResponse):
+    messageID = str(ctx.message.id)
+    user = await bot.fetch_user(userID)
+    botMessage = await recordResponseEdit(userID,messageID,user,newResponse)
+    username = user.name
+    await ctx.send(f"Attempted to edit response for {username}. Message returned:\n```{botMessage}```")
 
 
 @bot.command()
@@ -594,6 +620,22 @@ async def viewresponses(ctx):
     # check if the user is alive
     if userID not in aliveContestants:
         await ctx.send('Error! You are not an alive contestant!')
+        return
+    botMessage = RespondingPeriod.viewResponses(userID)
+    await ctx.send(botMessage)
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def viewResponsesOf(ctx,userID):
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='responding':
+        await ctx.send('Error! Responding is not currently open!')
+        return
+    aliveContestants = seasonInfoDB['aliveContestants']
+    # check if the user is alive
+    if userID not in aliveContestants:
+        await ctx.send('Error! That user is not an alive contestant!')
         return
     botMessage = RespondingPeriod.viewResponses(userID)
     await ctx.send(botMessage)
@@ -640,16 +682,20 @@ async def responseError(ctx,error):
 @bot.command()
 @commands.dm_only()
 async def vote(ctx,keyword,letters):
+    userID = str(ctx.message.author.id)
+    user = await bot.fetch_user(userID)
+    await recordVote(userID,user,keyword,letters)
+
+async def recordVote(userID,user,keyword,letters):
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     if seasonInfoDB['period']!='voting':
-        await ctx.send('Error! Voting is not currently open!')
-        return
-    userID = str(ctx.message.author.id)
+        message = 'Error! Voting is not currently open!'
+        await user.send(message)
+        return message
     botMessage = VotingPeriod.addVote(userID,keyword,letters)
-    await ctx.send(botMessage)
+    await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
-        user = await bot.fetch_user(int(userID))
         username = user.name
         if "edited" in botMessage:
             await channel.send(f'{username} has edited their vote: `{keyword} {letters}`')
@@ -660,63 +706,105 @@ async def vote(ctx,keyword,letters):
         server: discord.Guild = bot.get_guild(serverID)
         userMemberInList = [await server.fetch_member(userID)]
         await addRoleToList(roleIDs['supervoter'],userMemberInList)
+    return botMessage
 
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def voteFor(ctx,userID,keyword,letters):
+    user = await bot.fetch_user(userID)
+    botMessage = await recordVote(userID,keyword,letters)
+    username = user.name
+    await ctx.send(f"Attempted to add vote for {username}. Message returned:\n```{botMessage}```")
 
 @bot.command()
 @commands.dm_only()
 async def editvote(ctx,keyword,letters):
+    userID = str(ctx.message.author.id)
+    user = await bot.fetch_user(userID)
+    await recordVoteEdit(userID,user,keyword,letters)
+
+async def recordVoteEdit(userID,user,keyword,letters):
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     if seasonInfoDB['period']!='voting':
-        await ctx.send('Error! Voting is not currently open!')
-        return
-    userID = str(ctx.message.author.id)
+        message = 'Error! Voting is not currently open!'
+        await user.send('Error! Voting is not currently open!')
+        return message
     botMessage = VotingPeriod.editVote(userID,keyword,letters)
-    await ctx.send(botMessage)
+    await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
-        user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has edited a vote: `{keyword} {letters}`')
+    return botMessage
 
 @bot.command()
 @commands.dm_only()
 async def deletevote(ctx,keyword):
+    userID = str(ctx.message.author.id)
+    user = await bot.fetch_user(userID)
+    await recordVoteDelete(userID,user,keyword)   
+
+async def recordVoteDelete(userID,user,keyword):
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     if seasonInfoDB['period']!='voting':
-        await ctx.send('Error! Voting is not currently open!')
+        message = 'Error! Voting is not currently open!'
+        await user.send(message)
         return
-    userID = str(ctx.message.author.id)
     botMessage = VotingPeriod.deleteVote(userID,keyword)
-    await ctx.send(botMessage)
+    await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
-        user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has deleted their vote on screen `{keyword}`')
     # remove the supervoter role if they have it
     server: discord.Guild = bot.get_guild(serverID)
     userMemberInList = [await server.fetch_member(userID)]
     await removeRoleFromList(roleIDs['supervoter'],userMemberInList)
+    return botMessage
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def deleteVoteFor(ctx,userID,keyword):
+    user = await bot.fetch_user(userID)
+    botMessage = await recordVoteDelete(userID,keyword)
+    username = user.name
+    await ctx.send(f"Attempted to delete vote for {username}. Message returned:\n```{botMessage}```")
 
 @bot.command()
 @commands.dm_only()
 async def clearvotes(ctx):
+    userID = str(ctx.message.author.id)
+    user = await bot.fetch_user(userID)
+    await recordVoteClear(userID,user)  
+
+async def recordVoteClear(userID,user):
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     if seasonInfoDB['period']!='voting':
-        await ctx.send('Error! Voting is not currently open!')
-        return
-    userID = str(ctx.message.author.id)
+        message = 'Error! Voting is not currently open!'
+        await user.send(message)
+        return message
     botMessage = VotingPeriod.clearVotes(userID)
-    await ctx.send(botMessage)
+    await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
-        user = await bot.fetch_user(int(userID))
         username = user.name
         await channel.send(f'{username} has cleared all their votes')
     # remove the supervoter role if they have it
     server: discord.Guild = bot.get_guild(serverID)
     userMemberInList = [await server.fetch_member(userID)]
     await removeRoleFromList(roleIDs['supervoter'],userMemberInList)
+    return botMessage
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def clearVotesFor(ctx,userID):
+    user = await bot.fetch_user(userID)
+    botMessage = await recordVoteClear(userID)
+    username = user.name
+    await ctx.send(f"Attempted to clear votes for {username}. Message returned:\n```{botMessage}```")
 
 @bot.command()
 @commands.dm_only()
@@ -731,11 +819,27 @@ async def viewvotes(ctx):
 
 @bot.command()
 @commands.dm_only()
+@commands.is_owner()
+async def viewVotesOf(ctx,userID):
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='voting':
+        await ctx.send('Error! Voting is not currently open!')
+        return
+    botMessage = VotingPeriod.viewVotes(userID)
+    await ctx.send(botMessage)
+
+@bot.command()
+@commands.dm_only()
 async def supervoter(ctx):
     userID = str(ctx.message.author.id)
+    #hasSupervoted returns a message if the user has not supervoted
     message = VotingPeriod.hasSupervoted(userID)
     if message:
         await ctx.send(message)
+        return
+    userMember = await server.fetch_member(userID)
+    if checkIfUserHasRole(roleIDs['supervoter'],userMember):
+        await ctx.send("Error! You already have the Supervoter role! This cannot be undone.")
         return
     await ctx.send("Are you SURE you want access to the Supervoter channel? **You will not be able to edit or delete votes afterwards.**\n"+
                    "Type `yes` within 10 seconds to be given access to the Supervoter channel")
@@ -744,7 +848,7 @@ async def supervoter(ctx):
         await ctx.send("Interaction cancelled. You were not given access to the Supervoter channel")
         return
     server: discord.Guild = bot.get_guild(serverID)
-    userMemberInList = [await server.fetch_member(userID)]
+    userMemberInList = [userMember]
     await addRoleToList(roleIDs['supervoterReviews'],userMemberInList)
     with updateDBLock:
         votesDB = VotingPeriod.getVotesDB()
