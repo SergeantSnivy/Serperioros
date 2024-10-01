@@ -160,6 +160,7 @@ def addVote(userID,keyword,letters):
                         userNewSection = sectionName
                         break
                 votesDB[userID] = {'section':userNewSection,'screens':{},'supervoterAccess':False}
+                userCurrentSection = userNewSection
             votesDB[userID]['screens'][keyword] = letters
             updateVotesDB(votesDB)
             message=f"Success! Your vote of `{keyword} {letters}` has been logged!"

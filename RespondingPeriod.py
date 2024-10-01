@@ -144,7 +144,7 @@ def viewResponses(contestant):
     userResponses = responseDB[contestant]
     message = "Here's a list of your responses:"
     for response in userResponses:
-        message += f"\n`{response["content"]}"
+        message += f"\n`{response["content"]}`"
     return message
 
 def startResponding():

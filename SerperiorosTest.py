@@ -227,6 +227,7 @@ async def enforceDeadline(ctx):
             return
         seasonInfoDB['enforceDeadline'] = True
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
+        await ctx.send("Success! You are now enforcing the deadline!")
     period = seasonInfoDB['period']
     channel = None
     if period=='responding':
@@ -286,10 +287,11 @@ async def executeDeadline():
     if period == 'responding':
         print('responding')
         DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
-        server: discord.Guild = bot.get_guild(serverID)
-        DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
-        await removeRoleFromList(roleIDs['alive'],DNPMembers)
-        await addRoleToList(roleIDs['eliminated'],DNPMembers)
+        if seasonInfoDB['elimFormat'] == 'rollingAverage':
+            server: discord.Guild = bot.get_guild(serverID)
+            DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
+            await removeRoleFromList(roleIDs['alive'],DNPMembers)
+            await addRoleToList(roleIDs['eliminated'],DNPMembers)
         await doTaskAndSendMessage(VotingPeriod.startVoting)
         await executeDeadline()
     if period == 'voting':
@@ -337,7 +339,8 @@ async def startResponding(ctx,*,prompt):
 async def closeResponding(ctx):
     DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
     await ctx.send("Success! Responding is closed!")
-    if DNPList:
+    seasonInfoDB = SeasonInfo.geSeasonInfoDB()
+    if DNPList and seasonInfoDB['elimFormat'] == 'rollingAverage':
         server: discord.Guild = bot.get_guild(serverID)
         DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
         await removeRoleFromList(roleIDs['alive'],DNPMembers)
@@ -593,6 +596,7 @@ async def recordResponseEdit(userID,messageID,user,newResponse):
 async def respondFor(ctx,userID,*,response):
     messageID = str(ctx.message.id)
     user = await bot.fetch_user(userID)
+    await user.send("The host has sent a command for you. Result:")
     botMessage = await recordResponse(userID,messageID,user,response)
     username = user.name
     await ctx.send(f"Attempted to add response for {username}. Message returned:\n```{botMessage}```")
@@ -603,6 +607,7 @@ async def respondFor(ctx,userID,*,response):
 async def editFor(ctx,userID,*,newResponse):
     messageID = str(ctx.message.id)
     user = await bot.fetch_user(userID)
+    await user.send("The host has sent a command for you. Result:")
     botMessage = await recordResponseEdit(userID,messageID,user,newResponse)
     username = user.name
     await ctx.send(f"Attempted to edit response for {username}. Message returned:\n```{botMessage}```")
@@ -713,7 +718,8 @@ async def recordVote(userID,user,keyword,letters):
 @commands.dm_only()
 async def voteFor(ctx,userID,keyword,letters):
     user = await bot.fetch_user(userID)
-    botMessage = await recordVote(userID,keyword,letters)
+    await user.send("The host has sent a command for you. Result:")
+    botMessage = await recordVote(userID,user,keyword,letters)
     username = user.name
     await ctx.send(f"Attempted to add vote for {username}. Message returned:\n```{botMessage}```")
 
@@ -768,7 +774,8 @@ async def recordVoteDelete(userID,user,keyword):
 @commands.dm_only()
 async def deleteVoteFor(ctx,userID,keyword):
     user = await bot.fetch_user(userID)
-    botMessage = await recordVoteDelete(userID,keyword)
+    await user.send("The host has sent a command for you. Result:")
+    botMessage = await recordVoteDelete(userID,user,keyword)
     username = user.name
     await ctx.send(f"Attempted to delete vote for {username}. Message returned:\n```{botMessage}```")
 
@@ -802,7 +809,8 @@ async def recordVoteClear(userID,user):
 @commands.dm_only()
 async def clearVotesFor(ctx,userID):
     user = await bot.fetch_user(userID)
-    botMessage = await recordVoteClear(userID)
+    await user.send("The host has sent a command for you. Result:")
+    botMessage = await recordVoteClear(userID,user)
     username = user.name
     await ctx.send(f"Attempted to clear votes for {username}. Message returned:\n```{botMessage}```")
 
@@ -832,13 +840,18 @@ async def viewVotesOf(ctx,userID):
 @commands.dm_only()
 async def supervoter(ctx):
     userID = str(ctx.message.author.id)
+    period = SeasonInfo.getSeasonInfoDB()['period']
+    if period != 'voting':
+        await ctx.send("Error! The current period is not voting!")
+        return
     #hasSupervoted returns a message if the user has not supervoted
     message = VotingPeriod.hasSupervoted(userID)
     if message:
         await ctx.send(message)
         return
+    server: discord.Guild = bot.get_guild(serverID)
     userMember = await server.fetch_member(userID)
-    if checkIfUserHasRole(roleIDs['supervoter'],userMember):
+    if await checkIfUserHasRole(roleIDs['supervoterReviews'],userMember):
         await ctx.send("Error! You already have the Supervoter role! This cannot be undone.")
         return
     await ctx.send("Are you SURE you want access to the Supervoter channel? **You will not be able to edit or delete votes afterwards.**\n"+
@@ -865,7 +878,7 @@ async def noreminders(ctx):
     giveWarning = False
     server: discord.Guild = bot.get_guild(serverID)
     userMember = await server.fetch_member(userID)
-    if checkIfUserHasRole(roleIDs['noreminders'],userMember):
+    if await checkIfUserHasRole(roleIDs['noreminders'],userMember):
         await ctx.send("Error! You already have the No Reminders role! To remove it, use `sp/reminders`.")
         return
     if period=='responding':
@@ -901,7 +914,7 @@ async def reminders(ctx):
     period = seasonInfoDB['period']
     server: discord.Guild = bot.get_guild(serverID)
     userMember = await server.fetch_member(userID)
-    if not checkIfUserHasRole(roleIDs['noreminders'],userMember):
+    if not await checkIfUserHasRole(roleIDs['noreminders'],userMember):
         await ctx.send("Error! You are already receiving reminders! To opt out of reminders, use `sp/noreminders`.")
         return
     if period not in ['responding','voting']:
