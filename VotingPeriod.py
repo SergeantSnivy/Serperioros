@@ -170,7 +170,8 @@ def addVote(userID,keyword,letters):
             screensUserHasVotedOn = [screen for screen in votesDB[userID]['screens']]
             if all([keyword in screensUserHasVotedOn for keyword in keywordsPerSectionDB[userCurrentSection]]):
                 message+=f"\nYou have voted on every screen in section {userCurrentSection}!"
-                message+=f"\nYou can access the supervoter channel with `sp/supervoter`."
+                message+=f"\nYou can access the supervoter channel with `sp/supervoter`. "
+                message+="**NOTE**: You will no longer be able to edit or delete votes if you do this."
     return message
 
 def editVote(userID,keyword,letters):

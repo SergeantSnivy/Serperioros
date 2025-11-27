@@ -136,6 +136,26 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         message += f'response now reads:\n`{newResponse}`'
     return message
 
+def removeResponse(contestant,responseNum):
+    if responseNum<1:
+        return ("Failed! A contestant can't have less than 1 response, silly!","")
+    with updateDBLock:
+        responseDB = getResponseDB()
+        if contestant in responseDB:
+            numRecorded = len(responseDB[contestant])
+            if responseNum>numRecorded:
+                return (sopN(f'Failed! That contestant has only sent [{str(numRecorded)}] response{{/s}} so far!'),"")
+            responseContent = responseDB[contestant][responseNum-1]['content']
+            responseDB[contestant].pop(responseNum-1)
+            if numRecorded==1:
+                del responseDB[contestant]
+        else:
+            return ("Failed! That contestant isn't in the responding database!","")
+        updateResponseDB(responseDB)
+    return (f"Success! Response `{responseContent}` was removed. The contestant's response count is now {str(numRecorded-1)}.",
+            responseContent)
+    
+
 def viewResponses(contestant):
     responseDB = getResponseDB()
     # make sure the contestant has sent at least one response
@@ -193,7 +213,9 @@ def closeResponding():
                 DNPs.append(aliveContestant)
         if len(DNPs)!=0:
             # eliminate DNPs if vanilla; otherwise, add them to a list to give them 0% SR later
+            DNPDisplayNames = []
             for DNP in DNPs:
+                DNPDisplayNames.append(seasonInfoDB['aliveContestants'][DNP]['displayName'])
                 elimFormat = seasonInfoDB['elimFormat']
                 if elimFormat == 'vanilla':
                     seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
@@ -209,9 +231,6 @@ def closeResponding():
         if len(DNPs)==0:
             message += ("\nAll contestants sent responses. Hooray!")
         else:
-            DNPDisplayNames = []
-            for i,userID in enumerate(DNPs):
-                DNPDisplayNames.append(seasonInfoDB['aliveContestants'][userID]['displayName'])
             message += ("\n"+sopL(f"{lts(DNPDisplayNames)} ") 
                         +"failed to send responses. So sad.")
     return (message,'prompts',DNPs)

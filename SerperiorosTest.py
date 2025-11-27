@@ -10,6 +10,7 @@ import CalculateResults
 import SeasonInfo
 from PrivateStuff import pathToBot
 from Stats import updateAllStats, removeMostRecentRoundFromAllStats
+from Stats import addLeaderboardToSheet, removeMostRecentLeaderboardFromSheet
 from Misc import listToString as lts, singularOrPluralFromList as sopL, addDays, addMinutes
 import threading
 from datetime import datetime
@@ -339,8 +340,8 @@ async def startResponding(ctx,*,prompt):
 async def closeResponding(ctx):
     DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
     await ctx.send("Success! Responding is closed!")
-    seasonInfoDB = SeasonInfo.geSeasonInfoDB()
-    if DNPList and seasonInfoDB['elimFormat'] == 'rollingAverage':
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if DNPList and seasonInfoDB['elimFormat'] == 'vanilla':
         server: discord.Guild = bot.get_guild(serverID)
         DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
         await removeRoleFromList(roleIDs['alive'],DNPMembers)
@@ -392,9 +393,10 @@ async def applyResults(ctx):
         return
     # set backup
     SeasonInfo.updateSeasonInfoBackupDB(seasonInfoDB)
-    _, contestantScorePairs, statsRows, _ = CalculateResults.generateResults(getSheet=False)
+    _, contestantScorePairs, statsRows, resultsSheetID = CalculateResults.generateResults(getSheet=True)
     oldPrizerIDs = seasonInfoDB['currentPrizers']
     statsSheetID = updateAllStats(statsRows)
+    addLeaderboardToSheet(resultsSheetID)
     # note: awardElimsAndPrizes already recalculates elims based on rolling average if applicable
     prizerIDs, elimIDs = CalculateResults.awardElimsAndPrizes(contestantScorePairs)
     print(prizerIDs)
@@ -453,6 +455,7 @@ async def undoResults(ctx):
         return
     # load backup
     seasonInfoBackupDB = SeasonInfo.getSeasonInfoBackupDB()
+    seasonInfoBackupDB['statsSheetID'] = seasonInfoDB['statsSheetID']
     prizerIDsToUndo = seasonInfoDB['currentPrizers']
     prizerIDsToRestore = seasonInfoBackupDB['currentPrizers']
     elimIDsToUndo = set(seasonInfoDB['eliminatedContestants']).intersection(set(seasonInfoBackupDB['aliveContestants']))
@@ -469,6 +472,7 @@ async def undoResults(ctx):
         SeasonInfo.updateSeasonInfoDB(seasonInfoBackupDB)
     # undo stats
     statsSheetID = removeMostRecentRoundFromAllStats()
+    removeMostRecentLeaderboardFromSheet()
     channel = bot.get_channel(channelIDs['results'])
     await channel.send(f"Results have been undone.")
     #await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
@@ -549,7 +553,8 @@ async def recordResponse(userID,messageID,user,response):
                 SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
             channel = bot.get_channel(channelIDs['log'])
             username = user.name
-            await channel.send(f'{username} has responded: `{response}`')
+            number = len(RespondingPeriod.getResponseDB()[userID])
+            await channel.send(f'{username} ({userID}) has responded [{str(number)}]: `{response}`')
         return botMessage
 
 @bot.command(aliases=["editresponse"])
@@ -576,7 +581,7 @@ async def recordResponseEdit(userID,messageID,user,newResponse):
             return message
         # check if they included a number for which response to edit
         splitAtFirstSpace = newResponse.split(' ',1)
-        if splitAtFirstSpace[0].isnumeric():
+        if splitAtFirstSpace[0].isdigit():
             number = int(splitAtFirstSpace[0])
             newResponse = splitAtFirstSpace[1]
         else:
@@ -587,7 +592,7 @@ async def recordResponseEdit(userID,messageID,user,newResponse):
             channel = bot.get_channel(channelIDs['log'])
             user = await bot.fetch_user(int(userID))
             username = user.name
-            await channel.send(f'{username} has edited their response: `{newResponse}`')
+            await channel.send(f'{username} ({userID}) has edited their response [{str(number)}]: `{newResponse}`')
         return botMessage
 
 @bot.command()
@@ -600,6 +605,23 @@ async def respondFor(ctx,userID,*,response):
     botMessage = await recordResponse(userID,messageID,user,response)
     username = user.name
     await ctx.send(f"Attempted to add response for {username}. Message returned:\n```{botMessage}```")
+
+@bot.command()
+@commands.is_owner()
+@commands.dm_only()
+async def rejectResponse(ctx,userID,responseNum: str,*,reason):
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='responding':
+        message = 'Error! Responding is not currently open!'
+        return
+    if not responseNum.isdigit():
+        await ctx.send("Error: Invalid number!")
+        return
+    message,responseContent = RespondingPeriod.removeResponse(userID,int(responseNum))
+    if message[0]=='S':
+        user = await bot.fetch_user(userID)
+        await user.send(f"Your response `{responseContent}` was rejected. Reason: `{reason}`")
+    await ctx.send(message)
 
 @bot.command()
 @commands.is_owner()
@@ -855,10 +877,10 @@ async def supervoter(ctx):
         await ctx.send("Error! You already have the Supervoter role! This cannot be undone.")
         return
     await ctx.send("Are you SURE you want access to the Supervoter channel? **You will not be able to edit or delete votes afterwards.**\n"+
-                   "Type `yes` within 10 seconds to be given access to the Supervoter channel")
+                   "Type `yes` within 10 seconds to be given access to the Supervoter channel.")
     reply = await getConfirmationMessage(ctx)
     if not reply or reply.lower() != "yes":
-        await ctx.send("Interaction cancelled. You were not given access to the Supervoter channel")
+        await ctx.send("Interaction cancelled. You were not given access to the Supervoter channel.")
         return
     server: discord.Guild = bot.get_guild(serverID)
     userMemberInList = [userMember]

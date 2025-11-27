@@ -83,10 +83,14 @@ def getSRPairs(statsRows):
     stdev = pstdev(allScores)
     SRPairs = []
     for row in statsRows:
-        if row[2]!=-1:
+        if stdev==0:
+            SRPairs.append((row[0],0.5))
+        elif row[2]!=-1:
             SRPairs.append((row[0],norm.cdf(row[2],mean,stdev)))
         else:
             SRPairs.append((row[0],0))
+    print("!!!")
+    print(SRPairs)
     return SRPairs
 
 def getStDevPairs(statsRows):
@@ -121,7 +125,7 @@ def updateStatFile(CSVFileName,newPairs,numType):
     debuts = []
     # find each contestant's position in the stats sheet and then append their newest value
     for i,pair in enumerate(newPairs):
-        #print(pair)
+        print(pair)
         if pair[0] in contestantsInFile:
             statsFilePos = contestantsInFile.index(pair[0])
         else:
@@ -136,6 +140,7 @@ def updateStatFile(CSVFileName,newPairs,numType):
         print("Pstdev time")
         currentRow[iTotal] = sum(allValues)
         currentRow[iAvg] = sum(allValues)/len(allValues)
+        print(allValues)
         currentRow[iStdev] = pstdev(allValues)
     # add debuts
     for contestant, value in debuts:
@@ -220,7 +225,28 @@ def updateGoogleSheet(statsArrays):
                 if currentFormatGrid[row][col]:
                     nameFormatPairs.append((rowcol_to_a1(row+1,col+1),currentFormatGrid[row][col]))
         format_cell_ranges(worksheet,nameFormatPairs)
+    
     return rV.id
+
+def addLeaderboardToSheet(resultsSheetID):
+    statsSheetID = getSeasonInfoDB()['statsSheetID']
+    client = gspread.authorize(priv.creds)
+    resultsSheet = client.open_by_key(resultsSheetID)
+    worksheet = resultsSheet.get_worksheet(0)
+    worksheet.copy_to(statsSheetID)
+
+def removeMostRecentLeaderboardFromSheet():
+    seasonInfoDB = getSeasonInfoDB()
+    statsSheetID = seasonInfoDB['statsSheetID']
+    currentRound = seasonInfoDB['currentRound']
+    client = gspread.authorize(priv.creds)
+    statsSheet = client.open_by_key(statsSheetID)
+    worksheet = statsSheet.get_worksheet(5+currentRound-1)
+    print('A')
+    print(worksheet.title)
+    print('B')
+    statsSheet.del_worksheet(worksheet)
+
 
 def updateAllStats(newRows):
     currentRound = getSeasonInfoDB()['currentRound']

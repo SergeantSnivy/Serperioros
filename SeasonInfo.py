@@ -31,7 +31,7 @@ def createSeasonInfoDB(seasonName):
     seasonInfoDB = {'currentRound':1,'seasonName':seasonName,'responsesPerPerson':1,
                     'period':'preResponding','aliveContestants':{},
                     'eliminatedContestants':{},'currentPrizers':[],'currentDNPs':[],
-                    'prompts':[],'numResponses':0,'elimFormat':'rollingAverage','recalcPrev':False,
+                    'prompts':[],'numResponses':0,'elimFormat':'vanilla','recalcPrev':False,
                     'deadline':None,'deadlineMode':'min','deadlineLen':7,'enforceDeadline':True,
                     'limitType':'word','limit':10}
     # add season name to meta text file

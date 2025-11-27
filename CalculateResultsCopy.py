@@ -38,10 +38,10 @@ def getCellColorFromScore(minScore,maxScore,currentScore):
 updateDBLock = threading.Lock()
 
 def getCurrentRound():
-    return getSeasonInfoDB()['currentRound']
+    return 5
 
 def getScoresFileName():
-    return f'{getSeasonName()}R{str(getCurrentRound())}Scores.json'
+    return f'testScoresDB.json'
 
 def getElimsFileName():
     return f'{getSeasonName()}R{str(getCurrentRound())}Elims.json'
@@ -68,34 +68,18 @@ def eliminatedContestants(threshold,leaderboard):
 
 
 def createScoresDB():
-    scoresDB = userKeysToMessageKeys(getResponseDB())
-    for responseID in scoresDB:
-        scoresDB[responseID]['voteScores'] = []
-    votesDB = getVotesDB()
-    allScreens = getScreensDB()
-    # add each 
-    for userID in votesDB:
-        print('user')
-        for keyword in votesDB[userID]['screens']:
-            voteLetters = votesDB[userID]['screens'][keyword]
-            screenLen = len(allScreens[keyword])
-            for letter in allScreens[keyword]:
-                placeInVote = voteLetters.index(letter)
-                scoreToAdd = (screenLen-placeInVote-1)/(screenLen-1)
-                responseID = allScreens[keyword][letter]
-                scoresDB[responseID]['voteScores'].append(scoreToAdd)
-    # get final score, stdev, skew
-    for responseID in scoresDB:
+    scoresDB = {}
+    for responseID in range(101):
+        scoresDB[responseID] = {}
+        scoresDB[responseID]['voteScores'] = [1,2]
         voteScores = scoresDB[responseID]['voteScores']
-        scoresDB[responseID]['finalScore'] = sum(voteScores)/len(voteScores)
-        scoresDB[responseID]['stdev'] = pstdev(voteScores)
-        # handle invalid skews
-        if len(voteScores)<3 or all([voteScores[n]==voteScores[0] for n in range(1,len(voteScores))]):
-            scoresDB[responseID]['skew'] = 0
-        else:
-            scoresDB[responseID]['skew'] = skew(voteScores)
+        scoresDB[responseID]['author']=f'person{str(responseID)}'
+        scoresDB[responseID]['content']='Response'
+        scoresDB[responseID]['finalScore'] = (responseID-1)/100
+        scoresDB[responseID]['stdev'] = 0.2
+        scoresDB[responseID]['skew'] = 2
     print('cool')
-    with open(getScoresFileName(),'w') as f:
+    with open('testScoresDB.json','w') as f:
         json.dump(scoresDB,f,indent=4)
 
 def createElimsDB(eliminatedContestants):
@@ -123,9 +107,9 @@ def getSortedLeaderboards():
     formattedLB = []
     contestantScorePairs = []
     statsRows = []
-    seasonInfoDB = getSeasonInfoDB()
-    currentRound = seasonInfoDB['currentRound']
-    prompt = seasonInfoDB['prompts'][currentRound-1]
+    currentRound = getCurrentRound()
+    numPrizers = 2
+    prompt = "The prompt"
     formattedLB.append(tuple([prompt]+[None]*5))
     headers = ('Rank','Book','Contestant/\nResponse','Score','StDev/\nSkew','VRD')
     formattedLB.append(headers)
@@ -139,12 +123,12 @@ def getSortedLeaderboards():
     for row in leaderboard:
         dataDict = row[1]
         userID = dataDict['author']
-        userData = getSeasonInfoDB()['aliveContestants'][userID]
+        userData = []
         if 'bookLink' in userData:
             book = f'=image("{userData['bookLink']}")'
         else:
             book = '=image("https://files.catbox.moe/q6k2t9.png")'
-        contestant = userData['displayName']
+        contestant = userID
         response = dataDict['content']
         # sanitize potential formulas
         if response[0] in ['=','+',"'"]:
@@ -156,7 +140,6 @@ def getSortedLeaderboards():
         VRD = ('''=lambda(votes,SPARKLINE(transpose(sort(transpose(ARRAYFORMULA(FILTER(votes, votes <> "")'''
                +'''-AVERAGE(votes))),1,FALSE)),{"charttype","column";"ymin",-AVERAGE(votes);"ymax",1-AVERAGE(votes)}))'''
                +f'({sheetsRowArray(sorted(dataDict['voteScores'],reverse=True))})')
-        print(pastPlacers)
         statsRows.append((contestant,response,score,stdev,skew))
         if userID in pastPlacers:
             rank = '-'
@@ -171,35 +154,28 @@ def getSortedLeaderboards():
         formattedLB.append(row1)
         formattedLB.append(row2)
         currentColor = getCellColorFromScore(minPercent,maxPercent,score)
+        print(currentColor)
         cellWithColor = CellFormat(backgroundColorStyle=currentColor)
         for i in range(2):
             colorArray.append([cellWithColor]*6)
+    print(len(formattedLB))
+    print(len(colorArray))
     # add DNPs to contestantScorePairs and statsRows if not vanilla (necessary for them to be in SRs)
-    if seasonInfoDB['elimFormat'] != 'vanilla':
-        for DNP in seasonInfoDB['currentDNPs']:
-            contestantScorePairs.append((DNP,-1))
-            displayName = getSeasonInfoDB()['aliveContestants'][DNP]['displayName']
-            statsRows.append((displayName,'DNP',-1,0,0))
     # formattedLB / statsRows uses display name, contestantScorePairs uses user ID
     return formattedLB,colorArray,contestantScorePairs,statsRows
 
 def getPhaseLeaderboard(currentRoundPairs):
-    currentRoundSRPairs = getSRPairsFromContestantScorePairs(currentRoundPairs)
+    currentRoundSRPairs = currentRoundPairs
     print(currentRoundSRPairs)
     totalSRPairs = []
     formattedLB = []
     currentRound = getCurrentRound()
     headers = ("Rank","Book","Contestant","Total",f"Round {str(currentRound-1)}",f"Round {str(currentRound)}")
     formattedLB.append(headers)
-    aliveContestants = getSeasonInfoDB()['aliveContestants']
     for userID,currentSR in currentRoundSRPairs:
-        userData = aliveContestants[userID]
-        if 'bookLink' in userData:
-            book = f'=image("{userData['bookLink']}")'
-        else:
-            book = '=image("https://files.catbox.moe/q6k2t9.png")'
-        prevSR = userData['prevScore']
-        displayName = userData['displayName']
+        book = '=image("https://files.catbox.moe/q6k2t9.png")'
+        prevSR = 0
+        displayName = "Person"
         totalSR = prevSR+currentSR
         formattedLB.append([None,book,displayName,totalSR,prevSR,currentSR])
         totalSRPairs.append((userID,totalSR))
@@ -217,18 +193,16 @@ def getPhaseLeaderboard(currentRoundPairs):
 # imports data from 2d array into a Google Sheet
 # the Google Sheet will be formatted based on a results template
 def create_google_sheet(leaderboard,templateID):
-    roundNumber = getSeasonInfoDB()['currentRound']
     values = leaderboard[0]
     colors = leaderboard[1]
     client = gspread.authorize(priv.creds)
-    rV = client.copy(templateID,title=f"Round {str(roundNumber)} Results")
+    rV = client.copy(templateID,title="Testing")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
     try:
         worksheet = rV.get_worksheet(0)
         worksheet.resize(rows=len(values), cols=len(values[0]))
-        worksheet.update_title(f"Round {str(roundNumber)}")
     except:
         worksheet = rV.add_worksheet(title=f"Results", rows=len(values), cols=len(values[0]))
     worksheet.update(values,value_input_option=ValueInputOption.user_entered)
@@ -312,3 +286,5 @@ def awardElimsAndPrizes(contestantScorePairs):
     
 
 
+_,pairs,_,_,=generateResults()
+a=generatePhaseResults(pairs)

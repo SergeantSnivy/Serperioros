@@ -9,7 +9,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import PrivateStuff as priv
-from SeasonInfo import getSeasonInfoDB
+from SeasonInfo import getSeasonInfoDB, getSeasonName
 
 thickBlackBorder = Border(style="SOLID_THICK")
 regularText = TextFormat(fontFamily="Trebuchet MS",fontSize=11)
@@ -125,9 +125,9 @@ def generate_section(responses,numScreens,sectionNum):
 
 # imports data from 2d array into a Google Sheet
 # the Google Sheet will be formatted based on a voting template
-def create_google_sheet(sections):
+def create_google_sheet(sections,currentRound):
     client = gspread.authorize(priv.creds)
-    rV = client.copy(priv.voting_template_id,title="Testing")
+    rV = client.copy(priv.voting_template_id,title=f"{getSeasonName()} Round {str(currentRound)} Voting")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
@@ -135,7 +135,7 @@ def create_google_sheet(sections):
     #df = pd.read_excel(file_path,sheet_name=None,header=None,na_filter=False)
     for n,(currentSecValues,currentFormatGrid) in enumerate(sections):
         try:
-            worksheet = rV.get_worksheet(n+1)
+            worksheet = rV.get_worksheet(n)
             worksheet.resize(rows=len(currentSecValues), cols=len(currentSecValues[0]))
         except:
             worksheet = rV.add_worksheet(title=f"Section {str(n)}", rows=len(currentSecValues), cols=len(currentSecValues[0]))
@@ -179,6 +179,6 @@ def generate_voting(responses):
             sections.append((keyResponsePairs,sectionFormatGrid))
             allScreens = allScreens | newScreens
             keywordsInEachSection = keywordsInEachSection | keywordsInSection
-    sheet_id = create_google_sheet(sections)
+    sheet_id = create_google_sheet(sections,currentRound)
     print(sheet_id)
     return uniTable,allScreens,keywordsInEachSection,sheet_id
