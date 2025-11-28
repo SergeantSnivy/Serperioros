@@ -8,6 +8,7 @@ import GenerateVoting
 import VotingPeriod
 import CalculateResults
 import SeasonInfo
+from ServerInfo import *
 from PrivateStuff import pathToBot
 from Stats import updateAllStats, removeMostRecentRoundFromAllStats
 from Stats import addLeaderboardToSheet, removeMostRecentLeaderboardFromSheet
@@ -17,14 +18,7 @@ from datetime import datetime
 from dotenv import load_dotenv
 from catbox_api import catboxAPI
 
-updateDBLock = threading.Lock()
-
-channelIDs = {'prompts':1249849815886725130,'technicals':1249849864729395241,
-              'voting':1249849883569946655,'results':1249849942928003164,
-              'log':1249886965046706206,'supervoterTalk':1280703395690451006}
-roleIDs = {'prize':1263736029131706378,'alive':1263724263807127595,'eliminated':1263724948682444861,
-           'supervoter':1280703462631276594,'supervoterReviews':1287186738975997954,'noreminders':1287181190432034886}
-serverID = 1204238093062901821
+updateDBLock = asyncio.Lock()
 
 intents = discord.Intents.default() #Defining intents
 intents.message_content = True # Adding the message_content intent so that the bot can read user messages
@@ -69,7 +63,7 @@ async def getConfirmationMessage(ctx):
 
 async def doTaskAndSendMessage(func):
     print("Performing "+func.__name__)
-    with updateDBLock:
+    async with updateDBLock:
         message, channelName = func()
     if channelName:
         channel = bot.get_channel(channelIDs[channelName])
@@ -80,7 +74,7 @@ async def doTaskAndSendMessage(func):
 
 async def doTaskSendMessageAndReturnExtras(func):
     print("Performing "+func.__name__)
-    with updateDBLock:
+    async with updateDBLock:
         message, channelName, extras = func()
     if channelName:
         channel = bot.get_channel(channelIDs[channelName])
@@ -155,7 +149,7 @@ async def setLimit(ctx,num,type):
     if type not in ("word","char"):
         await ctx.send(f"Error! {type} is not a valid limit type!")
     print("Setting limit")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         seasonInfoDB['limit'] = int(num)
         seasonInfoDB['limitType'] = type
@@ -173,7 +167,7 @@ async def setPeriod(ctx,newPeriod):
     if newPeriod==currentPeriod:
         await ctx.send(f"Error! {newPeriod} is already the current period!")
     print("Setting period")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         seasonInfoDB['period'] = newPeriod
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
@@ -192,7 +186,7 @@ async def setDeadline(ctx,timestamp):
         await ctx.send("Error! That's already the deadline!")
         return
     print("Setting deadline")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         print(seasonInfoDB)
         seasonInfoDB['deadline'] = int(timestamp)
@@ -218,7 +212,7 @@ async def setDeadline(ctx,timestamp):
 @commands.dm_only()
 async def enforceDeadline(ctx):
     print("Attempting to enforce deadline")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if not seasonInfoDB['deadline']:
             await ctx.send("Error! You have not set a deadline!")
@@ -250,7 +244,7 @@ async def enforceDeadline(ctx):
 @commands.dm_only()
 async def allowGrace(ctx):
     print("Attempting to allow grace")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         if not seasonInfoDB['enforceDeadline']:
             await ctx.send("You are already allowing grace.")
@@ -288,7 +282,7 @@ async def executeDeadline():
     if period == 'responding':
         print('responding')
         DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
-        if seasonInfoDB['elimFormat'] == 'rollingAverage':
+        if seasonInfoDB['elimFormat'] == 'vanilla':
             server: discord.Guild = bot.get_guild(serverID)
             DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
             await removeRoleFromList(roleIDs['alive'],DNPMembers)
@@ -319,7 +313,7 @@ async def startResponding(ctx,*,prompt):
     if not reply or reply.lower() != "yes":
         await ctx.send("The prompt was not sent.")
         return
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         currentRound = seasonInfoDB['currentRound']
         # failsafe against starting responding twice for some reason
@@ -341,6 +335,7 @@ async def closeResponding(ctx):
     DNPList = await doTaskSendMessageAndReturnExtras(RespondingPeriod.closeResponding)
     await ctx.send("Success! Responding is closed!")
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    print(DNPList)
     if DNPList and seasonInfoDB['elimFormat'] == 'vanilla':
         server: discord.Guild = bot.get_guild(serverID)
         DNPMembers = [await server.fetch_member(userID) for userID in DNPList]
@@ -392,7 +387,8 @@ async def applyResults(ctx):
         await ctx.send(f"Error! Current period is {period}!")
         return
     # set backup
-    SeasonInfo.updateSeasonInfoBackupDB(seasonInfoDB)
+    async with updateDBLock:
+        SeasonInfo.updateSeasonInfoBackupDB(seasonInfoDB)
     _, contestantScorePairs, statsRows, resultsSheetID = CalculateResults.generateResults(getSheet=True)
     oldPrizerIDs = seasonInfoDB['currentPrizers']
     statsSheetID = updateAllStats(statsRows)
@@ -414,7 +410,7 @@ async def applyResults(ctx):
     elimNames = SeasonInfo.getDisplayNamesFromIDs(elimIDs,False)
     seasonInfoDB = SeasonInfo.getSeasonInfoDB()
     print('Incrementing current round')
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB['period'] = 'preResponding'
         seasonInfoDB['currentRound'] += 1
         SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
@@ -430,7 +426,7 @@ async def applyResults(ctx):
         seasonName = seasonInfoDB['seasonName']
         await channel.send(sopL(f"{lts(prizerNames)} is the winner of {seasonName}! Hooray!"))
         print("Ending season")
-        with updateDBLock:
+        async with updateDBLock:
             seasonInfoDB['period'] = 'over'
             SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
     await channel.send(f"Stats sheet: \nhttps://docs.google.com/spreadsheets/d/{statsSheetID}")
@@ -468,7 +464,7 @@ async def undoResults(ctx):
     await removeRoleFromList(roleIDs['eliminated'],elimMembersToUndo)
     await addRoleToList(roleIDs['alive'],elimMembersToUndo)
     # overwrite DB with backup
-    with updateDBLock:
+    async with updateDBLock:
         SeasonInfo.updateSeasonInfoDB(seasonInfoBackupDB)
     # undo stats
     statsSheetID = removeMostRecentRoundFromAllStats()
@@ -483,7 +479,7 @@ async def undoResults(ctx):
 @commands.dm_only()
 async def updateDisplayNames(ctx):
     print("Updating display names")
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB()
         for userID in seasonInfoDB['aliveContestants']:
             user = await bot.fetch_user(int(userID))
@@ -494,7 +490,7 @@ async def updateDisplayNames(ctx):
 @commands.is_owner()
 @commands.dm_only()
 async def forceEliminate(ctx,contestantID):
-    with updateDBLock:
+    async with updateDBLock:
         seasonInfoDB = SeasonInfo.getSeasonInfoDB
         if contestantID not in seasonInfoDB['aliveContestants']:
             await ctx.send("Error! That user is not an alive contestant!")
@@ -519,43 +515,46 @@ async def respond(ctx,*,response):
 
 async def recordResponse(userID,messageID,user,response):
     print("Recording a response")
-    with updateDBLock:
-        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        if seasonInfoDB['period']!='responding':
-            message = 'Error! Responding is not currently open!'
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='responding':
+        message = 'Error! Responding is not currently open!'
+        await user.send(message)
+        return message
+    currentRound = seasonInfoDB['currentRound']
+    aliveContestants = seasonInfoDB['aliveContestants']
+    print('ok')
+    # check if the user is alive
+    # if not, add them to the pool if it's r1, but reject their response if it's after r1
+    dbNeedsUpdating = False
+    if userID not in aliveContestants:
+        if currentRound != 1 and not (seasonInfoDB['elimFormat']=='rollingAverage' and currentRound==2):
+            message = 'Error! You are not currently a contestant!'
             await user.send(message)
             return message
-        currentRound = seasonInfoDB['currentRound']
-        aliveContestants = seasonInfoDB['aliveContestants']
-        print('ok')
-        # check if the user is alive
-        # if not, add them to the pool if it's r1, but reject their response if it's after r1
-        dbNeedsUpdating = False
-        if userID not in aliveContestants:
-            if currentRound != 1 and not (seasonInfoDB['elimFormat']=='rollingAverage' and currentRound==2):
-                message = 'Error! You are not currently a contestant!'
-                await user.send(message)
-                return message
-            else:
-                user = await bot.fetch_user(int(userID))
-                currentContestantDB = seasonInfoDB['aliveContestants'][userID] = {}
-                currentContestantDB['displayName'] = user.display_name
-                if seasonInfoDB['elimFormat']=='rollingAverage':
-                    currentContestantDB['prevScore'] = 0
-                dbNeedsUpdating = True
+        else:
+            user = await bot.fetch_user(int(userID))
+            currentContestantDB = seasonInfoDB['aliveContestants'][userID] = {}
+            currentContestantDB['displayName'] = user.display_name
+            if seasonInfoDB['elimFormat']=='rollingAverage':
+                currentContestantDB['prevScore'] = 0
+            dbNeedsUpdating = True
+    async with updateDBLock:
         botMessage = RespondingPeriod.addResponse(userID,response,messageID)
-        await user.send(botMessage)
-        if botMessage[0]=='S':
-            if dbNeedsUpdating:
-                server: discord.Guild = bot.get_guild(serverID)
-                member = await server.fetch_member(userID) 
-                await member.add_roles(await getRole(roleIDs['alive']))
+    await user.send(botMessage)
+    if botMessage[0]=='S':
+        if dbNeedsUpdating:
+            server: discord.Guild = bot.get_guild(serverID)
+            member = await server.fetch_member(userID) 
+            await member.add_roles(await getRole(roleIDs['alive']))
+            async with updateDBLock:
+                seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+                seasonInfoDB['aliveContestants'][userID] = currentContestantDB
                 SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
-            channel = bot.get_channel(channelIDs['log'])
-            username = user.name
-            number = len(RespondingPeriod.getResponseDB()[userID])
-            await channel.send(f'{username} ({userID}) has responded [{str(number)}]: `{response}`')
-        return botMessage
+        channel = bot.get_channel(channelIDs['log'])
+        username = user.name
+        number = len(RespondingPeriod.getResponseDB()[userID])
+        await channel.send(f'{username} ({userID}) has responded [{str(number)}]: `{response}`')
+    return botMessage
 
 @bot.command(aliases=["editresponse"])
 @commands.dm_only()
@@ -566,34 +565,34 @@ async def edit(ctx,*,newResponse):
     await recordResponseEdit(userID,messageID,user,newResponse)
     
 async def recordResponseEdit(userID,messageID,user,newResponse):
-    with updateDBLock:
-        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        if seasonInfoDB['period']!='responding':
-            message = 'Error! Responding is not currently open!'
-            await user.send(message)
-            return message
-        aliveContestants = seasonInfoDB['aliveContestants']
-        # check if the user is alive
-        # if not, reject their edit
-        if userID not in aliveContestants:
-            message = 'Error! You are not an alive contestant!'
-            await user.send(message)
-            return message
-        # check if they included a number for which response to edit
-        splitAtFirstSpace = newResponse.split(' ',1)
-        if splitAtFirstSpace[0].isdigit():
-            number = int(splitAtFirstSpace[0])
-            newResponse = splitAtFirstSpace[1]
-        else:
-            number = 1
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    if seasonInfoDB['period']!='responding':
+        message = 'Error! Responding is not currently open!'
+        await user.send(message)
+        return message
+    aliveContestants = seasonInfoDB['aliveContestants']
+    # check if the user is alive
+    # if not, reject their edit
+    if userID not in aliveContestants:
+        message = 'Error! You are not an alive contestant!'
+        await user.send(message)
+        return message
+    # check if they included a number for which response to edit
+    splitAtFirstSpace = newResponse.split(' ',1)
+    if splitAtFirstSpace[0].isdigit():
+        number = int(splitAtFirstSpace[0])
+        newResponse = splitAtFirstSpace[1]
+    else:
+        number = 1
+    async with updateDBLock:
         botMessage = RespondingPeriod.editResponse(userID,number,newResponse,messageID)
-        await user.send(botMessage)
-        if botMessage[0]=='S':
-            channel = bot.get_channel(channelIDs['log'])
-            user = await bot.fetch_user(int(userID))
-            username = user.name
-            await channel.send(f'{username} ({userID}) has edited their response [{str(number)}]: `{newResponse}`')
-        return botMessage
+    await user.send(botMessage)
+    if botMessage[0]=='S':
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} ({userID}) has edited their response [{str(number)}]: `{newResponse}`')
+    return botMessage
 
 @bot.command()
 @commands.is_owner()
@@ -617,7 +616,8 @@ async def rejectResponse(ctx,userID,responseNum: str,*,reason):
     if not responseNum.isdigit():
         await ctx.send("Error: Invalid number!")
         return
-    message,responseContent = RespondingPeriod.removeResponse(userID,int(responseNum))
+    async with updateDBLock:
+        message,responseContent = RespondingPeriod.removeResponse(userID,int(responseNum))
     if message[0]=='S':
         user = await bot.fetch_user(userID)
         await user.send(f"Your response `{responseContent}` was rejected. Reason: `{reason}`")
@@ -672,30 +672,31 @@ async def viewResponsesOf(ctx,userID):
 @commands.dm_only()
 async def setbook(ctx):
     print("Recording a book")
-    with updateDBLock:
-        seasonInfoDB = SeasonInfo.getSeasonInfoDB()
-        userID = str(ctx.message.author.id)
-        # only alive contestants can set books
-        if userID not in seasonInfoDB['aliveContestants']:
-            await ctx.send('Error! You are not an alive contestant!')
-            return
-        attachments = ctx.message.attachments
-        if len(attachments)==0:
-            await ctx.send("Error! You did not attach an image!")
-            return
-        file = attachments[0]
-        if file.content_type.split('/')[0]=='image':
-            api = catboxAPI(os.getenv('CATBOX_TOKEN'))
-            catboxURL = "https://files.catbox.moe/"+api.upload_from_url(file.url)
+    seasonInfoDB = SeasonInfo.getSeasonInfoDB()
+    userID = str(ctx.message.author.id)
+    # only alive contestants can set books
+    if userID not in seasonInfoDB['aliveContestants']:
+        await ctx.send('Error! You are not an alive contestant!')
+        return
+    attachments = ctx.message.attachments
+    if len(attachments)==0:
+        await ctx.send("Error! You did not attach an image!")
+        return
+    file = attachments[0]
+    if file.content_type.split('/')[0]=='image':
+        api = catboxAPI(os.getenv('CATBOX_TOKEN'))
+        catboxURL = "https://files.catbox.moe/"+api.upload_from_url(file.url)
+        async with updateDBLock:
+            seasonInfoDB = SeasonInfo.getSeasonInfoDB()
             seasonInfoDB['aliveContestants'][userID]['bookLink'] = catboxURL
             SeasonInfo.updateSeasonInfoDB(seasonInfoDB)
-            await ctx.send("Success! Your book has been set to the image you sent!")
-            channel = bot.get_channel(channelIDs['log'])
-            user = await bot.fetch_user(int(userID))
-            username = user.name
-            await channel.send(f'{username} has edited their book: `{catboxURL}`')
-        else:
-            await ctx.send("Error! The attached file is not an image!")
+        await ctx.send("Success! Your book has been set to the image you sent!")
+        channel = bot.get_channel(channelIDs['log'])
+        user = await bot.fetch_user(int(userID))
+        username = user.name
+        await channel.send(f'{username} has edited their book: `{catboxURL}`')
+    else:
+        await ctx.send("Error! The attached file is not an image!")
 
 @respond.error
 @edit.error
@@ -719,7 +720,8 @@ async def recordVote(userID,user,keyword,letters):
         message = 'Error! Voting is not currently open!'
         await user.send(message)
         return message
-    botMessage = VotingPeriod.addVote(userID,keyword,letters)
+    async with updateDBLock:
+        botMessage = VotingPeriod.addVote(userID,keyword,letters)
     await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
@@ -758,7 +760,8 @@ async def recordVoteEdit(userID,user,keyword,letters):
         message = 'Error! Voting is not currently open!'
         await user.send('Error! Voting is not currently open!')
         return message
-    botMessage = VotingPeriod.editVote(userID,keyword,letters)
+    async with updateDBLock:
+        botMessage = VotingPeriod.editVote(userID,keyword,letters)
     await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
@@ -779,7 +782,8 @@ async def recordVoteDelete(userID,user,keyword):
         message = 'Error! Voting is not currently open!'
         await user.send(message)
         return
-    botMessage = VotingPeriod.deleteVote(userID,keyword)
+    async with updateDBLock:
+        botMessage = VotingPeriod.deleteVote(userID,keyword)
     await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
@@ -814,7 +818,8 @@ async def recordVoteClear(userID,user):
         message = 'Error! Voting is not currently open!'
         await user.send(message)
         return message
-    botMessage = VotingPeriod.clearVotes(userID)
+    async with updateDBLock:
+        botMessage = VotingPeriod.clearVotes(userID)
     await user.send(botMessage)
     if botMessage[0]=='S':
         channel = bot.get_channel(channelIDs['log'])
@@ -885,7 +890,7 @@ async def supervoter(ctx):
     server: discord.Guild = bot.get_guild(serverID)
     userMemberInList = [userMember]
     await addRoleToList(roleIDs['supervoterReviews'],userMemberInList)
-    with updateDBLock:
+    async with updateDBLock:
         votesDB = VotingPeriod.getVotesDB()
         votesDB[userID]['supervoterAccess'] = True
         VotingPeriod.updateVotesDB(votesDB)

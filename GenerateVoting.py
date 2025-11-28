@@ -9,7 +9,7 @@ from copy import deepcopy
 import numpy as np
 import pandas as pd
 import PrivateStuff as priv
-from SeasonInfo import getSeasonInfoDB, getSeasonName
+from SeasonInfo import getSeasonInfoDB, getFormattedSeasonName
 
 thickBlackBorder = Border(style="SOLID_THICK")
 regularText = TextFormat(fontFamily="Trebuchet MS",fontSize=11)
@@ -127,7 +127,7 @@ def generate_section(responses,numScreens,sectionNum):
 # the Google Sheet will be formatted based on a voting template
 def create_google_sheet(sections,currentRound):
     client = gspread.authorize(priv.creds)
-    rV = client.copy(priv.voting_template_id,title=f"{getSeasonName()} Round {str(currentRound)} Voting")
+    rV = client.copy(priv.voting_template_id,title=f"{getFormattedSeasonName()} Round {str(currentRound)} Voting")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')

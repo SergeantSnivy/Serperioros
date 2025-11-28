@@ -35,8 +35,6 @@ def getCellColorFromScore(minScore,maxScore,currentScore):
         rgbList.append((maxColor[i]-minColor[i])*colorScore+minColor[i])
     return ColorStyle(rgbColor=Color(rgbList[0],rgbList[1],rgbList[2]))
 
-updateDBLock = threading.Lock()
-
 def getCurrentRound():
     return getSeasonInfoDB()['currentRound']
 
@@ -62,10 +60,6 @@ def eliminatedContestants(threshold,leaderboard):
     numEliminated = nonBankerRound(max(1,threshold*numContestants))
     print(numEliminated)
     return leaderboard[numContestants-numEliminated:numContestants]
-
-
-
-
 
 def createScoresDB():
     scoresDB = userKeysToMessageKeys(getResponseDB())

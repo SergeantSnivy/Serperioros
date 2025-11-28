@@ -1,5 +1,6 @@
 import json
 import os
+import re
 from PrivateStuff import pathToBot
 
 '''seasonParamsMutable =  {'currentRound':{'default':1,'convert': lambda x: int(x), 'permitted': 
@@ -56,6 +57,9 @@ def createSeasonInfoDB(seasonName):
 def getSeasonName():
     # season name should always be the name of the current directory
     return os.getcwd().split('\\')[-1]
+
+def getFormattedSeasonName():
+    return re.sub('_',' ',getSeasonName())
 
 def getSeasonInfoFileName():
     return f'{getSeasonName()}Info.json'

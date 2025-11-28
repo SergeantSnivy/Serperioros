@@ -4,8 +4,7 @@ from Misc import singularOrPluralFromNumber as sopN, singularOrPluralFromList as
 from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
 from TechnicalTools import reformat, getWords
 from datetime import datetime
-
-updateDBLock = threading.Lock()
+from ServerInfo import *
 
 def getCurrentRound():
     return getSeasonInfoDB()['currentRound']
@@ -80,26 +79,25 @@ def addResponse(contestant,response:str,messageID):
         if numChars>charLimit:
             return f"Failed! Your response has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     print("addResponse")
-    with updateDBLock:
-        responseDB = getResponseDB()
-        if contestant in responseDB:
-            numRecorded = len(responseDB[contestant])
-        else:
-            numRecorded = 0
-        if numRecorded<maxResponses(contestant):
-            if contestant not in responseDB:
-                responseDB[contestant] = []
-            responseDB[contestant].append({'content':response,'ID':messageID})
-            updateResponseDB(responseDB)
-            message = ('Success! The following response has been recorded:\n'
-                    +f'`{response}`')
-        else:
-            message = (sopN(f'Failed! You have already sent [{str(numRecorded)}] response{{/s}}, ')
-                            +'which is the maximum allowed for this round!\nTo edit a response, '
-                            +'type `sp/edit ')
-            if maxResponses(contestant)>1:
-                message += '[response #] '
-            message += '[new response]`.'
+    responseDB = getResponseDB()
+    if contestant in responseDB:
+        numRecorded = len(responseDB[contestant])
+    else:
+        numRecorded = 0
+    if numRecorded<maxResponses(contestant):
+        if contestant not in responseDB:
+            responseDB[contestant] = []
+        responseDB[contestant].append({'content':response,'ID':messageID})
+        updateResponseDB(responseDB)
+        message = ('Success! The following response has been recorded:\n'
+                +f'`{response}`')
+    else:
+        message = (sopN(f'Failed! You have already sent [{str(numRecorded)}] response{{/s}}, ')
+                        +'which is the maximum allowed for this round!\nTo edit a response, '
+                        +'type `sp/edit ')
+        if maxResponses(contestant)>1:
+            message += '[response #] '
+        message += '[new response]`.'
     return message
 
 def editResponse(contestant,responseNum,newResponse,messageID):
@@ -120,38 +118,36 @@ def editResponse(contestant,responseNum,newResponse,messageID):
         if numChars>charLimit:
             return f"Failed! Your response edit has {str(numChars)} characters, which exceeds the limit of {str(charLimit)}!"
     print("editResponse")
-    with updateDBLock:
-        responseDB = getResponseDB()
-        if contestant in responseDB:
-            numRecorded = len(responseDB[contestant])
-        else:
-            numRecorded = 0
-        if responseNum>numRecorded:
-            return sopN(f'Failed! You have only sent [{str(numRecorded)}] response{{/s}} so far, not {str(responseNum)}!')
-        responseDB[contestant][responseNum-1] = {'content':newResponse,'ID':messageID}
-        updateResponseDB(responseDB)
-        message = 'Success! Your '
-        if maxResponses(contestant)!=1:
-            message += f'#{str(responseNum)} '
-        message += f'response now reads:\n`{newResponse}`'
+    responseDB = getResponseDB()
+    if contestant in responseDB:
+        numRecorded = len(responseDB[contestant])
+    else:
+        numRecorded = 0
+    if responseNum>numRecorded:
+        return sopN(f'Failed! You have only sent [{str(numRecorded)}] response{{/s}} so far, not {str(responseNum)}!')
+    responseDB[contestant][responseNum-1] = {'content':newResponse,'ID':messageID}
+    updateResponseDB(responseDB)
+    message = 'Success! Your '
+    if maxResponses(contestant)!=1:
+        message += f'#{str(responseNum)} '
+    message += f'response now reads:\n`{newResponse}`'
     return message
 
 def removeResponse(contestant,responseNum):
     if responseNum<1:
         return ("Failed! A contestant can't have less than 1 response, silly!","")
-    with updateDBLock:
-        responseDB = getResponseDB()
-        if contestant in responseDB:
-            numRecorded = len(responseDB[contestant])
-            if responseNum>numRecorded:
-                return (sopN(f'Failed! That contestant has only sent [{str(numRecorded)}] response{{/s}} so far!'),"")
-            responseContent = responseDB[contestant][responseNum-1]['content']
-            responseDB[contestant].pop(responseNum-1)
-            if numRecorded==1:
-                del responseDB[contestant]
-        else:
-            return ("Failed! That contestant isn't in the responding database!","")
-        updateResponseDB(responseDB)
+    responseDB = getResponseDB()
+    if contestant in responseDB:
+        numRecorded = len(responseDB[contestant])
+        if responseNum>numRecorded:
+            return (sopN(f'Failed! That contestant has only sent [{str(numRecorded)}] response{{/s}} so far!'),"")
+        responseContent = responseDB[contestant][responseNum-1]['content']
+        responseDB[contestant].pop(responseNum-1)
+        if numRecorded==1:
+            del responseDB[contestant]
+    else:
+        return ("Failed! That contestant isn't in the responding database!","")
+    updateResponseDB(responseDB)
     return (f"Success! Response `{responseContent}` was removed. The contestant's response count is now {str(numRecorded-1)}.",
             responseContent)
     
@@ -168,27 +164,28 @@ def viewResponses(contestant):
     return message
 
 def startResponding():
-    with updateDBLock:
-        seasonInfoDB = getSeasonInfoDB()
-        seasonInfoDB['currentDNPs'] = []
-        currentRound = seasonInfoDB['currentRound']
-        createResponseDB()
-        prompt = seasonInfoDB['prompts'][-1]
-        seasonInfoDB['period'] = 'responding'
-        message = (f"Round {str(currentRound)} has started! Your prompt is: \n"+
-                        f"```{prompt}```")
-        limitType = {'char':'characters','word':'words'}[seasonInfoDB['limitType']]
-        limit = str(seasonInfoDB['limit'])
-        message += f"Your response must not exceed **{limit} {limitType}**, or it will be rejected."
-        deadline = None
-        if seasonInfoDB['deadlineMode']=='min':
-            deadline = addMinutes(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
-            message += f'\nRespond by <t:{deadline}:T>, which is <t:{deadline}:R>.'
-        elif seasonInfoDB['deadlineMode']=='day':
-            deadline = addDays(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
-            message += f'\nRespond by <t:{deadline}:F>, which is <t:{deadline}:R>.'
-        seasonInfoDB['deadline'] = deadline
-        updateSeasonInfoDB(seasonInfoDB)
+    seasonInfoDB = getSeasonInfoDB()
+    seasonInfoDB['currentDNPs'] = []
+    currentRound = seasonInfoDB['currentRound']
+    createResponseDB()
+    prompt = seasonInfoDB['prompts'][-1]
+    seasonInfoDB['period'] = 'responding'
+    message = (f"Round {str(currentRound)} has started! Your prompt is: \n"+
+                    f"```{prompt}```")
+    limitType = {'char':'characters','word':'words'}[seasonInfoDB['limitType']]
+    limit = str(seasonInfoDB['limit'])
+    message += f"Your response must not exceed **{limit} {limitType}**, or it will be rejected."
+    message += f'\nRespond to <@{str(botID)}> with `sp/respond [response content]`.'
+    message += f' View more responding commands in <#{str(channelIDs['commandListing'])}>.'
+    deadline = None
+    if seasonInfoDB['deadlineMode']=='min':
+        deadline = addMinutes(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+        message += f'\nRespond by <t:{deadline}:T>, which is <t:{deadline}:R>.'
+    elif seasonInfoDB['deadlineMode']=='day':
+        deadline = addDays(datetime.now().timestamp(),seasonInfoDB['deadlineLen'])
+        message += f'\nRespond by <t:{deadline}:F>, which is <t:{deadline}:R>.'
+    seasonInfoDB['deadline'] = deadline
+    updateSeasonInfoDB(seasonInfoDB)
     return (message, "prompts")
 
 def closeResponding():
@@ -197,33 +194,32 @@ def closeResponding():
     if period != 'responding':
         return (f"Error! Current period is {period}!", None, None)
     print("attempting closeResponding")
-    with updateDBLock:
-        seasonInfoDB = getSeasonInfoDB()
-        seasonInfoDB['period'] = 'preVoting'
-        seasonInfoDB['deadline'] = None
-        # get the number of responses sent 
-        responseDB = getResponseDB()
-        messagesAsKeys = userKeysToMessageKeys(responseDB)
-        responseCount = len(messagesAsKeys)
-        seasonInfoDB['numResponses'] = responseCount
-        # eliminate people if they didn't send a response
-        DNPs = []
-        for aliveContestant in seasonInfoDB['aliveContestants']:
-            if aliveContestant not in responseDB:
-                DNPs.append(aliveContestant)
-        if len(DNPs)!=0:
-            # eliminate DNPs if vanilla; otherwise, add them to a list to give them 0% SR later
-            DNPDisplayNames = []
-            for DNP in DNPs:
-                DNPDisplayNames.append(seasonInfoDB['aliveContestants'][DNP]['displayName'])
-                elimFormat = seasonInfoDB['elimFormat']
-                if elimFormat == 'vanilla':
-                    seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
-                    del seasonInfoDB['aliveContestants'][DNP]
-                # if statement in case of running code multiple times
-                elif DNP not in seasonInfoDB['currentDNPs']:
-                    seasonInfoDB['currentDNPs'].append(DNP)
-        updateSeasonInfoDB(seasonInfoDB)
+    seasonInfoDB = getSeasonInfoDB()
+    seasonInfoDB['period'] = 'preVoting'
+    seasonInfoDB['deadline'] = None
+    # get the number of responses sent 
+    responseDB = getResponseDB()
+    messagesAsKeys = userKeysToMessageKeys(responseDB)
+    responseCount = len(messagesAsKeys)
+    seasonInfoDB['numResponses'] = responseCount
+    # eliminate people if they didn't send a response
+    DNPs = []
+    for aliveContestant in seasonInfoDB['aliveContestants']:
+        if aliveContestant not in responseDB:
+            DNPs.append(aliveContestant)
+    if len(DNPs)!=0:
+        # eliminate DNPs if vanilla; otherwise, add them to a list to give them 0% SR later
+        DNPDisplayNames = []
+        for DNP in DNPs:
+            DNPDisplayNames.append(seasonInfoDB['aliveContestants'][DNP]['displayName'])
+            elimFormat = seasonInfoDB['elimFormat']
+            if elimFormat == 'vanilla':
+                seasonInfoDB['eliminatedContestants'][DNP] = seasonInfoDB['aliveContestants'][DNP]
+                del seasonInfoDB['aliveContestants'][DNP]
+            # if statement in case of running code multiple times
+            elif DNP not in seasonInfoDB['currentDNPs']:
+                seasonInfoDB['currentDNPs'].append(DNP)
+    updateSeasonInfoDB(seasonInfoDB)
     currentRound = seasonInfoDB['currentRound']
     message = (f"Round {str(currentRound)} responding is now closed!\n"+
                f"We received {str(responseCount)} responses from {str(len(responseDB))} contestants.")

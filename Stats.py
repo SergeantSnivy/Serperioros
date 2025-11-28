@@ -1,5 +1,5 @@
 import csv
-from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName
+from SeasonInfo import getSeasonInfoDB, updateSeasonInfoDB, getSeasonName, getFormattedSeasonName
 from statistics import pstdev
 from scipy.stats import norm
 import gspread
@@ -195,7 +195,7 @@ def updateEveryResponseFile(CSVFileName,newRows):
 
 def createSeasonGoogleSheet():
     client = gspread.authorize(priv.creds)
-    rV = client.copy(priv.stats_template_id,title=f"{getSeasonName()} Stats Sheet")
+    rV = client.copy(priv.stats_template_id,title=f"{getFormattedSeasonName()} Stats Sheet")
     for email in priv.my_emails:
         rV.share(email,perm_type='user',role='writer')
     rV.share('',perm_type='anyone',role='reader')
@@ -233,7 +233,13 @@ def addLeaderboardToSheet(resultsSheetID):
     client = gspread.authorize(priv.creds)
     resultsSheet = client.open_by_key(resultsSheetID)
     worksheet = resultsSheet.get_worksheet(0)
-    worksheet.copy_to(statsSheetID)
+    copiedWorksheetDict = worksheet.copy_to(statsSheetID)
+    statsSheet = client.open_by_key(statsSheetID)
+    copiedWorksheet = statsSheet.get_worksheet_by_id(copiedWorksheetDict['sheetId'])
+    name = copiedWorksheet.title
+    print("The!!!!!!")
+    print(name)
+    copiedWorksheet.update_title(name[8:])
 
 def removeMostRecentLeaderboardFromSheet():
     seasonInfoDB = getSeasonInfoDB()
@@ -241,7 +247,7 @@ def removeMostRecentLeaderboardFromSheet():
     currentRound = seasonInfoDB['currentRound']
     client = gspread.authorize(priv.creds)
     statsSheet = client.open_by_key(statsSheetID)
-    worksheet = statsSheet.get_worksheet(5+currentRound-1)
+    worksheet = statsSheet.worksheet(f"Round {str(currentRound)}")
     print('A')
     print(worksheet.title)
     print('B')
